@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="banner.png" alt="LeakGuard Banner" />
+</p>
+
 # LeakGuard -- GitHub Security Hardening Toolkit
 
 **LeakGuard** is a comprehensive security scanning toolkit for GitHub organizations on the **free plan**. Prevents credential leaks and enforces security policies using client-side pre-commit hooks and GitHub Actions as a server-side safety net.
@@ -7,13 +11,47 @@
 ## Table of Contents
 
 1. [GitHub Organization Security Overview](#1-github-organization-security-overview)
+   - [Why Org-Level Security Matters](#why-org-level-security-matters)
+   - [Shared Responsibility Model](#shared-responsibility-model)
 2. [Security Features by GitHub Plan](#2-security-features-by-github-plan)
+   - [What This Means for Free Plan Users](#what-this-means-for-free-plan-users)
+   - [Upgrade Path](#upgrade-path)
 3. [Secret and Credential Management](#3-secret-and-credential-management)
+   - [Why Secrets Leak](#why-secrets-leak)
+   - [Types of Secrets to Watch For](#types-of-secrets-to-watch-for)
+   - [Best Practices](#best-practices)
 4. [How This Project Works](#4-how-this-project-works)
+   - [Architecture](#architecture)
+   - [Tool Choice: gitleaks](#tool-choice-gitleaks)
+   - [Encrypted Keyword Scanning](#encrypted-keyword-scanning)
+   - [File Type Blocking](#file-type-blocking)
+   - [Files Reference](#files-reference)
 5. [Setup Guide](#5-setup-guide)
+   - [Prerequisites](#prerequisites)
+   - [Install](#install)
+   - [For New Developers Joining the Org](#for-new-developers-joining-the-org)
+   - [Adding or Updating Keywords](#adding-or-updating-keywords)
+   - [One-Time History Audit](#one-time-history-audit)
+   - [Creating Encrypted Archives](#creating-encrypted-archives)
+   - [Customizing File Type Blocking](#customizing-file-type-blocking)
 6. [Handling Cases](#6-handling-cases)
+   - [A File Type Is Blocked](#a-file-type-is-blocked)
+   - [A Secret Is Detected (Pre-Commit Blocked)](#a-secret-is-detected-pre-commit-blocked)
+   - [A Secret Has Already Been Committed](#a-secret-has-already-been-committed)
+   - [A Keyword Match Is Found](#a-keyword-match-is-found)
+   - [CI Workflow Fails](#ci-workflow-fails)
+   - [Emergency Bypass](#emergency-bypass)
 7. [2FA and Access Control](#7-2fa-and-access-control)
+   - [Two-Factor Authentication](#two-factor-authentication)
+   - [Access Control Best Practices](#access-control-best-practices)
+   - [CODEOWNERS](#codeowners)
 8. [Maintenance](#8-maintenance)
+   - [Updating Gitleaks](#updating-gitleaks)
+   - [Updating the Keyword List](#updating-the-keyword-list)
+   - [Adding New Repos](#adding-new-repos)
+   - [Monitoring](#monitoring)
+   - [Additional Hardening](#additional-hardening)
+9. [Limitations (Free Plan)](#limitations-free-plan)
 
 ---
 
