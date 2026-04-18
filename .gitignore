@@ -1,0 +1,14 @@
+node_modules/
+reports/
+.claude/
+*.png
+
+# Sensitive files that must never be committed
+.security-key
+security-keywords.txt
+
+# Standard ignores
+*.env
+*.pem
+*.key
+credentials.json

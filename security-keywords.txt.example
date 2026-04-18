@@ -1,0 +1,30 @@
+# Security Keywords List -- EXAMPLE TEMPLATE
+# This file shows the format for security-keywords.txt
+# DO NOT put real keywords in this file -- it is committed to the repo.
+#
+# Usage:
+#   1. Copy this file to security-keywords.txt
+#   2. Replace the examples below with your actual sensitive terms
+#   3. Run: scripts/encrypt-keywords.sh
+#   4. Commit the resulting security-keywords.enc (NOT the .txt)
+#
+# Format:
+#   - One keyword/phrase per line
+#   - Lines starting with # are comments (ignored)
+#   - Matching is case-insensitive
+#   - Empty lines are ignored
+
+# Client names
+acme-corp
+globex-industries
+
+# Project codenames
+project-phoenix
+operation-sunrise
+
+# Internal identifiers
+internal-api-v2
+staging-db-cluster
+
+# Domain-specific terms
+secret-endpoint-name

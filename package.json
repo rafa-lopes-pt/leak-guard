@@ -1,0 +1,56 @@
+{
+  "name": "@rafa-lopes-pt/leakguard",
+  "version": "1.0.0",
+  "description": "GitHub security hardening toolkit -- pre-commit hooks and CI for secret scanning, keyword blocking, and file type enforcement",
+  "type": "module",
+  "bin": {
+    "gst": "./bin/gst.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/setup.js",
+    "scripts/encrypt-keywords.js",
+    "scripts/scan-history.js",
+    "scripts/create-zip.js",
+    "scripts/hooks/pre-commit",
+    ".gitleaks.toml",
+    ".security-filetypes.default",
+    "workflows/",
+    "security-keywords.txt.example",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "encrypt-keywords": "node scripts/encrypt-keywords.js",
+    "scan-history": "node scripts/scan-history.js"
+  },
+  "keywords": [
+    "security",
+    "github",
+    "pre-commit",
+    "gitleaks",
+    "secret-scanning",
+    "git-hooks"
+  ],
+  "author": "rafa-lopes-pt",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rafa-lopes-pt/leak-guard.git"
+  },
+  "homepage": "https://github.com/rafa-lopes-pt/leak-guard#readme",
+  "bugs": {
+    "url": "https://github.com/rafa-lopes-pt/leak-guard/issues"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.0.0"
+  }
+}

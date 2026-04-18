@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# Pre-commit hook: blocks commits containing secrets, sensitive keywords, or blocked file types.
+# Installed by scripts/setup.js -- works in Git Bash (Windows) and native bash (Linux/macOS).
+#
+# Three sequential scans -- all must pass for the commit to proceed.
+# Bypass with: git commit --no-verify (emergencies only)
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# Colors (disable if not a terminal)
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    YELLOW='\033[0;33m'
+    GREEN='\033[0;32m'
+    BOLD='\033[1m'
+    RESET='\033[0m'
+else
+    RED='' YELLOW='' GREEN='' BOLD='' RESET=''
+fi
+
+fail() {
+    echo -e "${RED}${BOLD}COMMIT BLOCKED${RESET}: $1"
+    exit 1
+}
+
+warn() {
+    echo -e "${YELLOW}WARNING${RESET}: $1"
+}
+
+pass() {
+    echo -e "${GREEN}PASS${RESET}: $1"
+}
+
+# Get list of staged files (added, copied, modified, renamed -- not deleted)
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+
+if [[ -z "$STAGED_FILES" ]]; then
+    exit 0  # Nothing staged
+fi
+
+BLOCKED=0
+
+# ---------------------------------------------------------------------------
+# SCAN 1: Blocked file types (extension + MIME type)
+# ---------------------------------------------------------------------------
+FILETYPES_CONFIG="${REPO_ROOT}/.security-filetypes"
+
+if [[ -f "$FILETYPES_CONFIG" ]]; then
+    # Parse config sections
+    declare -a BLOCKED_EXTS=()
+    declare -a BLOCKED_MIMES=()
+    declare -a ALLOWED_TYPES=()
+    declare -a ALLOWED_FILES=()
+    CURRENT_SECTION=""
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Strip inline comments and trim
+        line=$(echo "$line" | sed 's/#.*//' | xargs)
+        [[ -z "$line" ]] && continue
+
+        if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+            CURRENT_SECTION="${BASH_REMATCH[1]}"
+            continue
+        fi
+
+        case "$CURRENT_SECTION" in
+            extensions)    BLOCKED_EXTS+=("$line") ;;
+            mime-types)    BLOCKED_MIMES+=("$line") ;;
+            allowed-types) ALLOWED_TYPES+=("$line") ;;
+            allowed-files) ALLOWED_FILES+=("$line") ;;
+        esac
+    done < "$FILETYPES_CONFIG"
+
+    FILETYPE_BLOCKED=0
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        [[ ! -f "${REPO_ROOT}/${filepath}" ]] && continue
+
+        # Check allowed-files first (overrides everything)
+        SKIP=0
+        for allowed in "${ALLOWED_FILES[@]+"${ALLOWED_FILES[@]}"}"; do
+            if [[ "$filepath" == "$allowed" ]]; then
+                SKIP=1
+                break
+            fi
+        done
+        [[ $SKIP -eq 1 ]] && continue
+
+        # Check extension
+        filename=$(basename "$filepath")
+        ext=""
+        if [[ "$filename" == *.* ]]; then
+            ext=".${filename##*.}"
+            ext=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
+        fi
+
+        for blocked_ext in "${BLOCKED_EXTS[@]+"${BLOCKED_EXTS[@]}"}"; do
+            if [[ "$ext" == "$blocked_ext" ]]; then
+                echo -e "  ${RED}File type not allowed${RESET}: ${filepath} (${ext})"
+                FILETYPE_BLOCKED=1
+            fi
+        done
+
+        # MIME type detection
+        MIME=$(file --mime-type -b "${REPO_ROOT}/${filepath}" 2>/dev/null || echo "unknown")
+
+        # Check allowed MIME types first
+        MIME_ALLOWED=0
+        for allowed_mime in "${ALLOWED_TYPES[@]+"${ALLOWED_TYPES[@]}"}"; do
+            if [[ "$MIME" == "$allowed_mime" ]]; then
+                MIME_ALLOWED=1
+                break
+            fi
+        done
+        [[ $MIME_ALLOWED -eq 1 ]] && continue
+
+        # Check blocked MIME prefixes
+        for blocked_mime in "${BLOCKED_MIMES[@]+"${BLOCKED_MIMES[@]}"}"; do
+            if [[ "$MIME" == ${blocked_mime}* ]]; then
+                echo -e "  ${RED}Unscannable file detected${RESET}: ${filepath} (${MIME})"
+                echo "    Binary files must be added inside an encrypted .7z archive."
+                echo "    Run: 7z a -p -mhe=on archive.7z ${filepath}"
+                FILETYPE_BLOCKED=1
+                break
+            fi
+        done
+    done <<< "$STAGED_FILES"
+
+    if [[ $FILETYPE_BLOCKED -eq 1 ]]; then
+        fail "Blocked file types detected. Remove them, add to [allowed-files] in .security-filetypes, or package in encrypted .7z."
+    fi
+    pass "File type check"
+else
+    warn "No .security-filetypes config found, skipping file type check."
+fi
+
+# ---------------------------------------------------------------------------
+# SCAN 2: Keyword check (encrypted keyword list)
+# ---------------------------------------------------------------------------
+KEY_FILE="${REPO_ROOT}/.security-key"
+ENC_FILE="${REPO_ROOT}/security-keywords.enc"
+
+if [[ -f "$ENC_FILE" ]]; then
+    if [[ ! -f "$KEY_FILE" ]]; then
+        warn "Encrypted keyword list found but .security-key is missing. Skipping keyword scan."
+        warn "Run the setup script to configure your encryption key."
+    else
+        TEMP_KEYWORDS=$(mktemp)
+        trap "rm -f '$TEMP_KEYWORDS'" EXIT
+
+        if openssl enc -d -aes-256-cbc -pbkdf2 \
+            -in "$ENC_FILE" \
+            -pass "file:${KEY_FILE}" \
+            -out "$TEMP_KEYWORDS" 2>/dev/null; then
+
+            KEYWORD_BLOCKED=0
+            DIFF_CONTENT=$(git diff --cached --unified=0)
+
+            while IFS= read -r keyword || [[ -n "$keyword" ]]; do
+                # Skip comments and empty lines
+                [[ -z "$keyword" || "$keyword" =~ ^[[:space:]]*# ]] && continue
+                keyword=$(echo "$keyword" | xargs)
+                [[ -z "$keyword" ]] && continue
+
+                # Search staged diff content (case-insensitive)
+                if echo "$DIFF_CONTENT" | grep -qi "$keyword" 2>/dev/null; then
+                    # Find which file(s) contain the match
+                    while IFS= read -r filepath; do
+                        [[ -z "$filepath" ]] && continue
+                        [[ ! -f "${REPO_ROOT}/${filepath}" ]] && continue
+                        if git diff --cached -- "$filepath" | grep -qi "$keyword" 2>/dev/null; then
+                            echo -e "  ${RED}Keyword match${RESET}: '${keyword}' in ${filepath}"
+                            KEYWORD_BLOCKED=1
+                        fi
+                    done <<< "$STAGED_FILES"
+                fi
+            done < "$TEMP_KEYWORDS"
+
+            rm -f "$TEMP_KEYWORDS"
+
+            if [[ $KEYWORD_BLOCKED -eq 1 ]]; then
+                fail "Sensitive keywords detected in staged changes. Remove them before committing."
+            fi
+            pass "Keyword check"
+        else
+            warn "Failed to decrypt keyword list (wrong key?). Skipping keyword scan."
+            rm -f "$TEMP_KEYWORDS"
+        fi
+    fi
+else
+    # No keyword list -- silently skip (not all repos use this feature)
+    :
+fi
+
+# ---------------------------------------------------------------------------
+# SCAN 3: Secret/credential check (gitleaks)
+# ---------------------------------------------------------------------------
+if command -v gitleaks &>/dev/null; then
+    GITLEAKS_CONFIG="${REPO_ROOT}/.gitleaks.toml"
+    GITLEAKS_ARGS="protect --staged --exit-code 1"
+
+    if [[ -f "$GITLEAKS_CONFIG" ]]; then
+        GITLEAKS_ARGS="${GITLEAKS_ARGS} --config ${GITLEAKS_CONFIG}"
+    fi
+
+    if ! gitleaks $GITLEAKS_ARGS 2>&1; then
+        fail "Secrets/credentials detected by gitleaks. Remove them before committing."
+    fi
+    pass "Secret scan (gitleaks)"
+else
+    warn "gitleaks is not installed. Skipping secret scan."
+    warn "Install it: https://github.com/gitleaks/gitleaks#installing"
+fi
+
+echo -e "${GREEN}${BOLD}All security checks passed.${RESET}"
