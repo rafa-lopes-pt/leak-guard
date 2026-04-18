@@ -4,7 +4,7 @@
   "description": "GitHub security hardening toolkit -- pre-commit hooks and CI for secret scanning, keyword blocking, and file type enforcement",
   "type": "module",
   "bin": {
-    "gst": "bin/gst.js"
+    "leakguard": "bin/leakguard.js"
   },
   "files": [
     "bin/",

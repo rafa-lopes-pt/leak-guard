@@ -5,7 +5,7 @@ An npm package (`@rafa-lopes-pt/leakguard`) for hardening GitHub org security us
 
 ## Project Structure
 ```
-bin/gst.js                      # CLI entry point (subcommand dispatch)
+bin/leakguard.js                # CLI entry point (subcommand dispatch)
 scripts/
   setup.js                      # Interactive TUI setup (Node.js, ESM)
   encrypt-keywords.js            # Encrypts keyword list with openssl
@@ -19,10 +19,10 @@ workflows/secret-scan.yml       # GitHub Actions workflow (deployed to repos)
 ```
 
 ## CLI Commands
-- `gst` / `gst init` -- Interactive TUI setup
-- `gst encrypt-keywords` -- Encrypt keyword list
-- `gst scan-history [repo...]` -- One-time history audit
-- `gst --help` / `gst --version`
+- `leakguard` / `leakguard init` -- Interactive TUI setup
+- `leakguard encrypt-keywords` -- Encrypt keyword list
+- `leakguard scan-history [repo...]` -- One-time history audit
+- `leakguard --help` / `leakguard --version`
 
 ## Key Design Decisions
 - **gitleaks** over trufflehog/detect-secrets: single Go binary, MIT license, 150+ patterns

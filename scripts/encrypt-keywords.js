@@ -14,7 +14,7 @@ export async function encryptKeywords() {
 
   if (!existsSync(keyFile)) {
     console.error(`ERROR: Encryption key not found at ${keyFile}`);
-    console.error("Run 'gst init' first, or create .security-key with your passphrase.");
+    console.error("Run 'leakguard init' first, or create .security-key with your passphrase.");
     process.exit(1);
   }
 

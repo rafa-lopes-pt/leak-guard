@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CLI entry point for GitHub Security Toolkit (gst).
+// CLI entry point for LeakGuard.
 // Dispatches subcommands via process.argv -- no extra deps.
 
 import { readFileSync } from "node:fs";
@@ -17,10 +17,10 @@ function printVersion() {
 
 function printHelp() {
   console.log(`
-GitHub Security Toolkit (gst)
+LeakGuard -- GitHub Security Toolkit
 
 Usage:
-  gst [command] [options]
+  leakguard [command] [options]
 
 Commands:
   init                Interactive TUI setup (default)

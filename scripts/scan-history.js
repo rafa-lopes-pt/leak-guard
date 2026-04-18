@@ -3,7 +3,7 @@
 // Replaces scan-existing-history.sh with pure Node.js (no python3 dependency).
 //
 // Usage:
-//   gst scan-history [repo_path ...]
+//   leakguard scan-history [repo_path ...]
 //
 // If no arguments given, scans all git repos in the current directory.
 // Outputs JSON reports to ./reports/
@@ -111,7 +111,7 @@ export async function scanHistory(repoPaths = []) {
     if (existsSync(encFile) && existsSync(keyFile)) {
       console.log("  [2/2] Scanning current files for keyword matches...");
       const keywordReport = join(reportsDir, `${repoName}_keywords_${ts}.txt`);
-      const tempKeywords = join(tmpdir(), `gst-keywords-${Date.now()}.txt`);
+      const tempKeywords = join(tmpdir(), `leakguard-keywords-${Date.now()}.txt`);
 
       try {
         execSync(

@@ -95,7 +95,7 @@ const DEFAULT_ALLOWED_TYPES = ["application/x-7z-compressed"];
 async function stepWelcome() {
   console.log(`
 =====================================
-  GitHub Security Hardening Setup
+       LeakGuard Setup
 =====================================
 
 This tool will configure security scanning for this repository:
