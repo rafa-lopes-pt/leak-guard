@@ -28,7 +28,8 @@ function commandExists(cmd) {
 }
 
 function run(cmd, opts = {}) {
-  return execSync(cmd, { encoding: "utf-8", stdio: "pipe", ...opts }).trim();
+  const result = execSync(cmd, { encoding: "utf-8", stdio: "pipe", ...opts });
+  return result == null ? "" : result.trim();
 }
 
 function isGitRepo() {
@@ -151,7 +152,7 @@ export async function deploy(args) {
   } else if (rc) {
     sourceDir = resolve(REPO_ROOT, "public-dist");
   } else {
-    console.error("ERROR: No .leakguardrc found. Run `leakguard init` first.");
+    console.error("ERROR: No .leakguardrc found. Run `leakguard setup-dist` first.");
     process.exit(1);
   }
 
@@ -187,7 +188,7 @@ export async function deploy(args) {
   // 3. Derive target repo
   const distRepo = rc?.distRepo;
   if (!distRepo) {
-    console.error("ERROR: No distRepo configured in .leakguardrc. Run `leakguard init` first.");
+    console.error("ERROR: No distRepo configured in .leakguardrc. Run `leakguard setup-dist` first.");
     process.exit(1);
   }
 
@@ -251,7 +252,7 @@ export async function deploy(args) {
       run(`git clone --depth 1 "${cloneUrl}" "${cloneTmp}"`, { stdio: "pipe" });
     } catch (e) {
       console.error(`ERROR: Failed to clone ${distRepo}. Does the repo exist?`);
-      console.error("Run `leakguard init` to create it.\n");
+      console.error("Run `leakguard setup-dist` to create it.\n");
       console.error(e.message);
       process.exit(1);
     }

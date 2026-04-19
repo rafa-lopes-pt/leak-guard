@@ -28,6 +28,7 @@ Commands:
   scan-history [dir]      One-time full-history audit
   zip <files...>          Create encrypted .7z archive
   deploy [path]           Scan, zip, and push a folder to the -dist repo
+  setup-dist              Set up the public -dist distribution repo
 
 Blacklist options:
   blacklist kw1 kw2       Add/merge keywords into existing list
@@ -121,6 +122,12 @@ switch (command) {
   case "deploy": {
     const { deploy } = await import("../scripts/deploy.js");
     await deploy(args.slice(1));
+    break;
+  }
+
+  case "setup-dist": {
+    const { setupDist } = await import("../scripts/setup-dist.js");
+    await setupDist();
     break;
   }
 
