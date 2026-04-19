@@ -6,6 +6,11 @@
 
 **LeakGuard** is a comprehensive security scanning toolkit for GitHub organizations on the **free plan**. Prevents credential leaks and enforces security policies using client-side pre-commit hooks and GitHub Actions as a server-side safety net.
 
+It is designed to provide a **practical layer of protection** where none exists by default -- catching accidental leaks before they happen. This is also why it encourages a **private source repo + encrypted public `-dist` repo** workflow: sensitive work stays in a private repo, and only curated, scanned, and encrypted content is published to the public one.
+
+> **No security tool is bulletproof -- LeakGuard is no exception.**
+> Every git hook can be bypassed with `--no-verify`, and free-tier GitHub cannot enforce status checks on private repos. Think of LeakGuard as a seatbelt, not an armored vault.
+
 ---
 
 ## Table of Contents
@@ -31,10 +36,12 @@
   - [5. Setup Guide](#5-setup-guide)
     - [Prerequisites](#prerequisites)
     - [Install](#install)
+    - [CLI Reference](#cli-reference)
     - [For New Developers Joining the Org](#for-new-developers-joining-the-org)
     - [Adding or Updating Keywords](#adding-or-updating-keywords)
     - [One-Time History Audit](#one-time-history-audit)
     - [Creating Encrypted Archives](#creating-encrypted-archives)
+    - [Public Distribution (Private Repo to Public -dist Repo)](#public-distribution-private-repo-to-public--dist-repo)
     - [Customizing File Type Blocking](#customizing-file-type-blocking)
   - [6. Handling Cases](#6-handling-cases)
     - [A File Type Is Blocked](#a-file-type-is-blocked)
@@ -179,11 +186,10 @@ Developer workstation              GitHub
 
 Some repos contain sensitive business terms (client names, project codenames, internal identifiers) that must never leak. A simple plaintext blocklist would itself be a leak, so:
 
-1. Keywords are written to `security-keywords.txt` (local, gitignored)
-2. The file is encrypted with `openssl enc -aes-256-cbc -pbkdf2` using a shared passphrase
-3. Only `security-keywords.enc` is committed to the repo
+1. Keywords are added via `leakguard blacklist` and encrypted with `openssl enc -aes-256-cbc -pbkdf2` using a shared passphrase
+2. Only `security-keywords.enc` is committed to the repo -- no plaintext ever touches disk
 4. The pre-commit hook decrypts it at scan time and greps staged changes
-5. GitHub Actions decrypts it using the `SECURITY_KEY` org secret
+5. GitHub Actions decrypts it using the `LEAKGUARD_SECURITY_KEY` repo secret
 
 ### File Type Blocking
 
@@ -202,9 +208,10 @@ Unscannable binary files (images, videos, PDFs, etc.) must be shipped inside an 
 | `.security-filetypes` | Extension + MIME type blocklist per repo | Yes |
 | `security-keywords.enc` | Encrypted keyword blocklist | Yes |
 | `.security-key` | Decryption passphrase | No (gitignored) |
-| `security-keywords.txt` | Plaintext keywords | No (gitignored) |
 | `.github/workflows/secret-scan.yml` | CI workflow | Yes |
 | `.git/hooks/pre-commit` | Local pre-commit hook | No (per-machine) |
+| `.leakguardrc` | Distribution config (distFolder, distRepo) | Yes |
+| `.git/hooks/pre-commit-dist` | Pre-commit hook for `-dist` repos (allowlist only) | No (per-machine) |
 
 ---
 
@@ -212,20 +219,72 @@ Unscannable binary files (images, videos, PDFs, etc.) must be shipped inside an 
 
 ### Prerequisites
 
-- Git
-- Node.js 18+
+- **Git**
+- **Node.js 18+**
+- **openssl** -- used for AES-256-CBC encryption of keyword blocklists
+- **[GitHub CLI (`gh`)](https://cli.github.com)** -- used during setup to sync the encryption key as a GitHub repo secret (`LEAKGUARD_SECURITY_KEY`) and to create/manage the public `-dist` repo. Also needed for org admin tasks (2FA audits, Dependabot setup, member reviews)
 - A terminal (bash, zsh, or Git Bash on Windows)
 
 ### Install
+
+Install globally:
 
 ```bash
 npm install -g @rafa-lopes-pt/leakguard
 ```
 
-Or use directly with `npx`:
+Or run any command on-demand with `npx` (no global install needed):
 
 ```bash
-npx @rafa-lopes-pt/leakguard
+npx @rafa-lopes-pt/leakguard [command] [options]
+```
+
+If installed globally, replace `npx @rafa-lopes-pt/leakguard` with just `leakguard` in all examples below.
+
+### CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `leakguard` / `leakguard init` | Interactive TUI setup (default) |
+| `leakguard blacklist kw1 kw2` | Add/merge keywords into encrypted blocklist |
+| `leakguard blacklist kw1 --override` | Replace entire keyword list |
+| `leakguard blacklist -l` / `--list` | Show current keywords |
+| `leakguard blacklist -r kw1 kw2` | Remove specific keywords |
+| `leakguard scan-history [dir...]` | One-time full-history audit |
+| `leakguard zip <files...>` | Create encrypted .7z archive |
+| `leakguard deploy [path]` | Scan, zip, and push to the public `-dist` repo |
+| `leakguard --help` | Show help |
+| `leakguard --version` | Print version |
+
+**Examples with npx:**
+
+```bash
+# Show help
+npx @rafa-lopes-pt/leakguard --help
+
+# Interactive setup (run from your repo root)
+npx @rafa-lopes-pt/leakguard init
+
+# Add keywords to the encrypted blocklist
+npx @rafa-lopes-pt/leakguard blacklist "client name" project-codename internal-id
+
+# List current keywords
+npx @rafa-lopes-pt/leakguard blacklist --list
+
+# Remove keywords
+npx @rafa-lopes-pt/leakguard blacklist --remove "client name"
+
+# Replace entire keyword list
+npx @rafa-lopes-pt/leakguard blacklist kw1 kw2 --override
+
+# Full-history audit on specific repos
+npx @rafa-lopes-pt/leakguard scan-history /path/to/repo1 /path/to/repo2
+
+# Package binary files into encrypted .7z
+npx @rafa-lopes-pt/leakguard zip assets/ config.dat
+
+# Deploy curated content to the public -dist repo
+npx @rafa-lopes-pt/leakguard deploy
 ```
 
 ### For New Developers Joining the Org
@@ -235,7 +294,7 @@ npx @rafa-lopes-pt/leakguard
 2. **Run setup on each repo** you work with:
    ```bash
    cd /path/to/your-repo
-   leakguard init
+   npx @rafa-lopes-pt/leakguard init
    ```
 
 3. The TUI will walk you through:
@@ -253,12 +312,26 @@ npx @rafa-lopes-pt/leakguard
 
 ### Adding or Updating Keywords
 
-1. Edit `security-keywords.txt` (one keyword per line, `#` for comments)
-2. Encrypt:
-   ```bash
-   leakguard encrypt-keywords
-   ```
-3. Commit `security-keywords.enc` (not the `.txt`)
+Add or merge keywords directly from the CLI (no plaintext file needed):
+
+```bash
+npx @rafa-lopes-pt/leakguard blacklist "client name" project-codename internal-id
+```
+
+To replace the entire list instead of merging:
+
+```bash
+npx @rafa-lopes-pt/leakguard blacklist kw1 kw2 kw3 --override
+```
+
+To view or remove keywords:
+
+```bash
+npx @rafa-lopes-pt/leakguard blacklist --list
+npx @rafa-lopes-pt/leakguard blacklist --remove "client name" internal-id
+```
+
+After any change, commit `security-keywords.enc` (never the plaintext).
 
 ### One-Time History Audit
 
@@ -266,10 +339,10 @@ Scan existing repos for previously committed secrets:
 
 ```bash
 # Scan specific repos
-leakguard scan-history /path/to/repo1 /path/to/repo2
+npx @rafa-lopes-pt/leakguard scan-history /path/to/repo1 /path/to/repo2
 
 # Scan all git repos in current directory
-leakguard scan-history
+npx @rafa-lopes-pt/leakguard scan-history
 ```
 
 Reports are saved to `./reports/`.
@@ -280,13 +353,40 @@ Binary files that need to be in the repo must be packaged in an encrypted `.7z` 
 
 ```bash
 # Single file
-leakguard zip myfile.bin
+npx @rafa-lopes-pt/leakguard zip myfile.bin
 
 # Multiple files or directories
-leakguard zip assets/ config.dat
+npx @rafa-lopes-pt/leakguard zip assets/ config.dat
 ```
 
 You will be prompted for a password. The archive is created in the current directory.
+
+### Public Distribution (Private Repo to Public `-dist` Repo)
+
+Organizations often need to share curated content from a private repo publicly without exposing the full repo. LeakGuard supports this through a **distribution workflow**: a designated folder in your private repo is scanned for secrets, packaged into an encrypted `.7z` archive, and pushed to a companion public `-dist` repo.
+
+**How it works:**
+
+1. During `leakguard init`, you can enable public distribution. This will:
+   - Create a public `<repo-name>-dist` repo on GitHub (via `gh`)
+   - Bootstrap it with leakguard security config (gitleaks rules, file type blocking, a dist-specific pre-commit hook)
+   - Save the config to `.leakguardrc` in your private repo
+   - Create a distribution folder (default: `public-dist/`)
+
+2. Place files you want to distribute in the distribution folder.
+
+3. Run deploy:
+   ```bash
+   npx @rafa-lopes-pt/leakguard deploy
+   ```
+
+4. Deploy will:
+   - Scan the folder with gitleaks and the keyword blocklist
+   - Block the deploy if secrets or sensitive keywords are found
+   - Create an encrypted `.7z` archive from the folder contents
+   - Push the archive to the `-dist` repo
+
+The `-dist` repo has its own pre-commit hook (`pre-commit-dist`) that only allows `.7z` archives and leakguard config files -- preventing accidental commits of unscanned content.
 
 ### Customizing File Type Blocking
 
@@ -356,7 +456,7 @@ Edit `.security-filetypes` in your repo:
 **Steps**:
 1. Review the match -- is this term actually sensitive in this context?
 2. If sensitive: rephrase or use a codename/abbreviation
-3. If the keyword is no longer sensitive: remove it from `security-keywords.txt` and re-encrypt
+3. If the keyword is no longer sensitive: remove it with `leakguard blacklist --remove <keyword>` and commit `security-keywords.enc`
 
 ### CI Workflow Fails
 
@@ -449,23 +549,26 @@ Also update the version in `workflows/secret-scan.yml`.
 
 ### Updating the Keyword List
 
-1. Edit `security-keywords.txt`
-2. Run `leakguard encrypt-keywords`
-3. Commit `security-keywords.enc`
-4. Other devs pull and get the updated encrypted list automatically
-5. Ensure the CI `SECURITY_KEY` org secret is still current
+1. Add, remove, or replace keywords:
+   ```bash
+   npx @rafa-lopes-pt/leakguard blacklist "new keyword"
+   npx @rafa-lopes-pt/leakguard blacklist --remove "old keyword"
+   ```
+2. Commit `security-keywords.enc`
+3. Other devs pull and get the updated encrypted list automatically
+4. Ensure the CI `LEAKGUARD_SECURITY_KEY` repo secret is still current
 
 ### Adding New Repos
 
 1. `cd` into the new repo
-2. Run `leakguard init`
+2. Run `npx @rafa-lopes-pt/leakguard init`
 3. Commit the generated files
 4. The CI workflow and pre-commit hook are ready
 
 ### Monitoring
 
 - Check GitHub Actions results after each push/PR
-- Run `leakguard scan-history` quarterly (or when new repos are added)
+- Run `npx @rafa-lopes-pt/leakguard scan-history` quarterly (or when new repos are added)
 - Review `.gitleaks.toml` allowlist entries periodically -- remove any that are no longer relevant
 - Verify all org members have 2FA enabled
 
