@@ -6,10 +6,10 @@
 
 import { select, checkbox, confirm, input } from "@inquirer/prompts";
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { platform, arch } from "node:os";
+import { platform, arch, tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -59,6 +59,31 @@ function ensureGitignoreEntry(entry) {
 
 function printHeader(text) {
   console.log(`\n--- ${text} ---\n`);
+}
+
+function syncGitHubSecret(keyFile) {
+  if (!commandExists("gh")) {
+    console.log("\nWARNING: gh CLI not found. Install it to auto-sync the key to GitHub.");
+    console.log("  https://cli.github.com/\n");
+    return;
+  }
+
+  try {
+    run("gh auth status");
+  } catch {
+    console.log("\nWARNING: gh CLI is not authenticated. Run 'gh auth login' first.");
+    console.log("  The key was NOT synced to GitHub.\n");
+    return;
+  }
+
+  const key = readFileSync(keyFile, "utf-8").trim();
+  try {
+    run(`gh secret set LEAKGUARD_SECURITY_KEY --body "${key}"`);
+    console.log("Synced encryption key to GitHub secret LEAKGUARD_SECURITY_KEY.");
+  } catch (e) {
+    console.log(`\nWARNING: Failed to sync key to GitHub: ${e.message}`);
+    console.log("  Set it manually: gh secret set LEAKGUARD_SECURITY_KEY < .security-key\n");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +254,7 @@ async function stepEncryptionKey() {
 
   writeFileSync(keyFile, key + "\n", { mode: 0o600 });
   console.log("Saved .security-key (permissions: owner-only read/write).");
+  syncGitHubSecret(keyFile);
 }
 
 // ---------------------------------------------------------------------------
@@ -239,56 +265,17 @@ async function stepKeywords() {
   printHeader("Keyword List");
 
   const encFile = join(REPO_ROOT, "security-keywords.enc");
-  const txtFile = join(REPO_ROOT, "security-keywords.txt");
-  const keyFile = join(REPO_ROOT, ".security-key");
 
   if (existsSync(encFile)) {
     console.log("security-keywords.enc already exists.");
-    const update = await confirm({ message: "Update the keyword list?", default: false });
-    if (!update) return;
-  }
-
-  if (!existsSync(keyFile)) {
-    console.log("No .security-key found. Skipping keyword setup (set up encryption key first).");
+    console.log("Manage keywords with: leakguard blacklist");
     return;
   }
 
-  let existingKeywords = "";
-  if (existsSync(txtFile)) {
-    existingKeywords = readFileSync(txtFile, "utf-8");
-  }
-
-  const keywords = await input({
-    message: "Enter sensitive keywords (comma-separated):",
-    default: existingKeywords
-      ? existingKeywords
-          .split("\n")
-          .filter((l) => l.trim() && !l.trim().startsWith("#"))
-          .join(", ")
-      : "",
-  });
-
-  if (!keywords.trim()) {
-    console.log("No keywords entered. Skipping.");
-    return;
-  }
-
-  // Write plaintext file
-  const lines = keywords
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean);
-  writeFileSync(txtFile, "# Security keywords -- DO NOT COMMIT THIS FILE\n" + lines.join("\n") + "\n");
-
-  // Encrypt
-  try {
-    run(
-      `openssl enc -aes-256-cbc -pbkdf2 -salt -in "${txtFile}" -out "${encFile}" -pass "file:${keyFile}"`,
-    );
-    console.log(`Encrypted ${lines.length} keyword(s) -> security-keywords.enc`);
-  } catch (e) {
-    console.log(`Encryption failed: ${e.message}`);
-  }
+  console.log("No keyword blocklist configured yet.");
+  console.log("After setup, add keywords with:\n");
+  console.log("  leakguard blacklist keyword1 keyword2 \"keyword 3\"\n");
+  console.log("Run 'leakguard blacklist --help' for all options.");
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +403,184 @@ async function step7z() {
 }
 
 // ---------------------------------------------------------------------------
-// Step 7: Summary and execution
+// Step 7: Public Distribution
+// ---------------------------------------------------------------------------
+
+async function stepPublicDist() {
+  printHeader("Public Distribution");
+
+  const enable = await confirm({
+    message: "Enable public distribution? (push curated content to a public -dist repo)",
+    default: false,
+  });
+  if (!enable) return;
+
+  // Parse org/repo from git remote
+  let org, repo;
+  try {
+    const origin = run("git remote get-url origin");
+    let fullName;
+    if (origin.startsWith("git@")) {
+      fullName = origin.split(":")[1].replace(/\.git$/, "");
+    } else {
+      const url = new URL(origin);
+      fullName = url.pathname.replace(/^\//, "").replace(/\.git$/, "");
+    }
+    [org, repo] = fullName.split("/");
+  } catch {
+    console.log("WARNING: Could not parse git remote. Skipping distribution setup.");
+    return;
+  }
+
+  if (!org || !repo) {
+    console.log("WARNING: Could not determine org/repo from remote. Skipping.");
+    return;
+  }
+
+  const distFolder = await input({
+    message: "Distribution folder path:",
+    default: "public-dist",
+  });
+
+  const distRepoName = `${repo}-dist`;
+  const distRepo = `${org}/${distRepoName}`;
+
+  // Check gh CLI
+  if (!commandExists("gh")) {
+    console.log("\nWARNING: gh CLI not found. Install it to auto-create the -dist repo.");
+    console.log("  https://cli.github.com/");
+    console.log(`\nManual step: create ${distRepo} on GitHub, then run \`leakguard deploy\`.`);
+    writeRc(distFolder, distRepo);
+    createDistFolder(distFolder);
+    return;
+  }
+
+  try {
+    run("gh auth status");
+  } catch {
+    console.log("\nWARNING: gh CLI is not authenticated. Run 'gh auth login' first.");
+    console.log(`\nManual step: create ${distRepo} on GitHub, then run \`leakguard deploy\`.`);
+    writeRc(distFolder, distRepo);
+    createDistFolder(distFolder);
+    return;
+  }
+
+  // Check if -dist repo exists
+  let repoExists = false;
+  try {
+    run(`gh repo view ${distRepo}`);
+    repoExists = true;
+    console.log(`\n${distRepo} already exists.`);
+  } catch {
+    // repo doesn't exist yet
+  }
+
+  if (!repoExists) {
+    const create = await confirm({
+      message: `Create public repo ${distRepo}?`,
+      default: true,
+    });
+
+    if (create) {
+      try {
+        run(`gh repo create ${distRepo} --public --confirm`);
+        console.log(`Created ${distRepo}.`);
+      } catch (e) {
+        console.log(`WARNING: Failed to create repo: ${e.message}`);
+        console.log(`Create it manually on GitHub, then run \`leakguard deploy\`.`);
+        writeRc(distFolder, distRepo);
+        createDistFolder(distFolder);
+        return;
+      }
+
+      // Bootstrap -dist repo with leakguard protection
+      const cloneTmp = join(tmpdir(), `leakguard-init-dist-${Date.now()}`);
+      try {
+        const origin = run("git remote get-url origin");
+        let cloneUrl;
+        if (origin.startsWith("git@")) {
+          const host = origin.split(":")[0];
+          cloneUrl = `${host}:${distRepo}.git`;
+        } else {
+          const url = new URL(origin);
+          cloneUrl = `${url.protocol}//${url.host}/${distRepo}.git`;
+        }
+
+        run(`git clone "${cloneUrl}" "${cloneTmp}"`, { stdio: "pipe" });
+
+        // Copy leakguard config files
+        const gitleaksConfig = join(PROJECT_ROOT, ".gitleaks.toml");
+        if (existsSync(gitleaksConfig)) {
+          copyFileSync(gitleaksConfig, join(cloneTmp, ".gitleaks.toml"));
+        }
+
+        const workflowSrc = join(PROJECT_ROOT, "workflows", "secret-scan.yml");
+        if (existsSync(workflowSrc)) {
+          const wfDir = join(cloneTmp, ".github", "workflows");
+          mkdirSync(wfDir, { recursive: true });
+          copyFileSync(workflowSrc, join(wfDir, "secret-scan.yml"));
+        }
+
+        // Copy .security-filetypes from source repo if available, otherwise from default
+        const srcFileTypes = join(REPO_ROOT, ".security-filetypes");
+        const defaultFileTypes = join(PROJECT_ROOT, ".security-filetypes.default");
+        if (existsSync(srcFileTypes)) {
+          copyFileSync(srcFileTypes, join(cloneTmp, ".security-filetypes"));
+        } else if (existsSync(defaultFileTypes)) {
+          copyFileSync(defaultFileTypes, join(cloneTmp, ".security-filetypes"));
+        }
+
+        // Create .gitignore with standard leakguard entries
+        writeFileSync(join(cloneTmp, ".gitignore"), ".security-key\nreports/\n");
+
+        // Install dist-specific pre-commit hook (allowlist: only .7z + config)
+        const distHookSrc = join(PROJECT_ROOT, "scripts", "hooks", "pre-commit-dist");
+        if (existsSync(distHookSrc)) {
+          const hookDir = join(cloneTmp, ".git", "hooks");
+          mkdirSync(hookDir, { recursive: true });
+          copyFileSync(distHookSrc, join(hookDir, "pre-commit"));
+          chmodSync(join(hookDir, "pre-commit"), 0o755);
+        }
+
+        run(`git -C "${cloneTmp}" add -A`);
+        const status = run(`git -C "${cloneTmp}" status --porcelain`);
+        if (status) {
+          run(`git -C "${cloneTmp}" commit -m "Add leakguard security config"`);
+          run(`git -C "${cloneTmp}" push`, { stdio: "pipe" });
+          console.log("Pushed leakguard config to -dist repo.");
+        }
+      } catch (e) {
+        console.log(`WARNING: Could not bootstrap -dist repo: ${e.message}`);
+      } finally {
+        rmSync(cloneTmp, { recursive: true, force: true });
+      }
+    }
+  }
+
+  writeRc(distFolder, distRepo);
+  createDistFolder(distFolder);
+}
+
+function writeRc(distFolder, distRepo) {
+  const rcPath = join(REPO_ROOT, ".leakguardrc");
+  const rc = existsSync(rcPath) ? JSON.parse(readFileSync(rcPath, "utf-8")) : {};
+  rc.distFolder = distFolder;
+  rc.distRepo = distRepo;
+  writeFileSync(rcPath, JSON.stringify(rc, null, 2) + "\n");
+  console.log(`Saved .leakguardrc (distFolder: ${distFolder}, distRepo: ${distRepo})`);
+}
+
+function createDistFolder(distFolder) {
+  const folderPath = join(REPO_ROOT, distFolder);
+  if (!existsSync(folderPath)) {
+    mkdirSync(folderPath, { recursive: true });
+    writeFileSync(join(folderPath, ".gitkeep"), "");
+    console.log(`Created ${distFolder}/ with .gitkeep`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step 8: Summary and execution
 // ---------------------------------------------------------------------------
 
 async function stepExecute() {
@@ -425,7 +589,7 @@ async function stepExecute() {
   const actions = [];
 
   // What we'll do
-  actions.push("Add .security-key and security-keywords.txt to .gitignore");
+  actions.push("Add .security-key to .gitignore");
 
   const gitleaksConfig = join(REPO_ROOT, ".gitleaks.toml");
   if (!existsSync(gitleaksConfig)) {
@@ -458,7 +622,6 @@ async function stepExecute() {
   // .gitignore entries
   const gitignoreEntries = [
     ".security-key",
-    "security-keywords.txt",
     "reports/",
   ];
   for (const entry of gitignoreEntries) {
@@ -496,9 +659,7 @@ async function stepExecute() {
     console.log("  - .github/workflows/secret-scan.yml");
   if (existsSync(join(REPO_ROOT, "security-keywords.enc"))) console.log("  - security-keywords.enc");
 
-  console.log("\nDo NOT commit: .security-key, security-keywords.txt (they are gitignored).");
-  console.log("\nReminder: Set the SECURITY_KEY org secret in GitHub for CI keyword scanning.");
-  console.log("  Settings -> Secrets and variables -> Actions -> New organization secret\n");
+  console.log("\nDo NOT commit .security-key (it is gitignored).");
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +674,7 @@ async function main() {
     await stepKeywords();
     await stepFileTypes();
     await step7z();
+    await stepPublicDist();
     await stepExecute();
   } catch (e) {
     if (e.name === "ExitPromptError") {

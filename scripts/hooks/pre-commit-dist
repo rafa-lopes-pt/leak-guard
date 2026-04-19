@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Pre-commit hook for -dist (public distribution) repos.
+# Only allows encrypted .7z archives and leakguard config files.
+# Installed by leakguard init when bootstrapping a -dist repo.
+#
+# Bypass with: git commit --no-verify (emergencies only)
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# Colors (disable if not a terminal)
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    YELLOW='\033[0;33m'
+    GREEN='\033[0;32m'
+    BOLD='\033[1m'
+    RESET='\033[0m'
+else
+    RED='' YELLOW='' GREEN='' BOLD='' RESET=''
+fi
+
+fail() {
+    echo -e "${RED}${BOLD}COMMIT BLOCKED${RESET}: $1"
+    exit 1
+}
+
+pass() {
+    echo -e "${GREEN}PASS${RESET}: $1"
+}
+
+# Get list of staged files (added, copied, modified, renamed -- not deleted)
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+
+if [[ -z "$STAGED_FILES" ]]; then
+    exit 0  # Nothing staged
+fi
+
+# ---------------------------------------------------------------------------
+# SCAN 1: Allowlist check -- only .7z archives and config files permitted
+# ---------------------------------------------------------------------------
+# Allowed paths: .7z files at repo root, plus leakguard config files
+ALLOWLIST_BLOCKED=0
+while IFS= read -r filepath; do
+    [[ -z "$filepath" ]] && continue
+
+    # Allow leakguard config files
+    case "$filepath" in
+        .gitignore|.gitleaks.toml|.security-filetypes|.leakguardrc)
+            continue ;;
+        .github/workflows/*.yml|.github/workflows/*.yaml)
+            continue ;;
+    esac
+
+    # Allow .7z files (any directory depth)
+    if [[ "$filepath" == *.7z ]]; then
+        continue
+    fi
+
+    echo -e "  ${RED}File not allowed${RESET}: ${filepath}"
+    echo "    This repo only accepts encrypted .7z archives."
+    echo "    Use \`leakguard deploy\` to push content here."
+    ALLOWLIST_BLOCKED=1
+done <<< "$STAGED_FILES"
+
+if [[ $ALLOWLIST_BLOCKED -eq 1 ]]; then
+    fail "Only encrypted .7z archives are allowed in this repo."
+fi
+pass "Allowlist check (only .7z + config files)"
+
+# ---------------------------------------------------------------------------
+# SCAN 2: Secret/credential check (gitleaks) -- scans non-.7z staged files
+# ---------------------------------------------------------------------------
+if command -v gitleaks &>/dev/null; then
+    GITLEAKS_CONFIG="${REPO_ROOT}/.gitleaks.toml"
+    GITLEAKS_ARGS="protect --staged --exit-code 1"
+
+    if [[ -f "$GITLEAKS_CONFIG" ]]; then
+        GITLEAKS_ARGS="${GITLEAKS_ARGS} --config ${GITLEAKS_CONFIG}"
+    fi
+
+    if ! gitleaks $GITLEAKS_ARGS 2>&1; then
+        fail "Secrets/credentials detected by gitleaks."
+    fi
+    pass "Secret scan (gitleaks)"
+else
+    echo -e "${YELLOW}WARNING${RESET}: gitleaks is not installed. Skipping secret scan."
+fi
+
+echo -e "${GREEN}${BOLD}All security checks passed.${RESET}"

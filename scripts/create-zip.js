@@ -38,7 +38,17 @@ export async function createZip(targets) {
     }
   }
 
-  const output = basename(targets[0]).replace(/\.[^.]+$/, "") + ".7z";
+  const defaultName = basename(targets[0]).replace(/\.[^.]+$/, "") + ".7z";
+
+  const rl1 = createInterface({ input: process.stdin, output: process.stdout });
+  const customName = await new Promise((resolve) =>
+    rl1.question(`Archive name [${defaultName}]: `, resolve),
+  );
+  rl1.close();
+
+  const output = customName.trim()
+    ? (customName.trim().endsWith(".7z") ? customName.trim() : customName.trim() + ".7z")
+    : defaultName;
 
   try {
     execSync(`7z a -p -mhe=on "${output}" ${targets.map((t) => `"${t}"`).join(" ")}`, {

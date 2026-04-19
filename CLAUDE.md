@@ -8,19 +8,21 @@ An npm package (`@rafa-lopes-pt/leakguard`) for hardening GitHub org security us
 bin/leakguard.js                # CLI entry point (subcommand dispatch)
 scripts/
   setup.js                      # Interactive TUI setup (Node.js, ESM)
-  encrypt-keywords.js            # Encrypts keyword list with openssl
+  encrypt-keywords.js            # Keyword management (encrypt/decrypt/merge/remove)
   scan-history.js                # One-time full-history audit
   hooks/pre-commit               # Pre-commit hook template (bash)
 .gitleaks.toml                  # Shared gitleaks secret scanning config
 .security-filetypes.default     # Default file type blocklist template
-security-keywords.txt.example   # Example keyword file format
 workflows/secret-scan.yml       # GitHub Actions workflow (deployed to repos)
 .github/workflows/publish.yml   # Automated npm publish on GitHub release
 ```
 
 ## CLI Commands
 - `leakguard` / `leakguard init` -- Interactive TUI setup
-- `leakguard encrypt-keywords` -- Encrypt keyword list
+- `leakguard blacklist <keywords>` -- Add/merge keywords into encrypted blocklist
+- `leakguard blacklist --override <keywords>` -- Replace entire keyword list
+- `leakguard blacklist -l` / `--list` -- Show current keywords
+- `leakguard blacklist -r` / `--remove <keywords>` -- Remove specific keywords
 - `leakguard scan-history [repo...]` -- One-time history audit
 - `leakguard --help` / `leakguard --version`
 
@@ -35,7 +37,7 @@ workflows/secret-scan.yml       # GitHub Actions workflow (deployed to repos)
 
 ## Conventions
 - The pre-commit hook has 3 sequential scans: file types, keywords, gitleaks
-- `.security-key` and `security-keywords.txt` are always gitignored (never committed)
+- `.security-key` is always gitignored (never committed)
 - Only `security-keywords.enc` gets committed
 - `PROJECT_ROOT = resolve(__dirname, "..")` resolves to the package root whether local or in `node_modules/`
 
