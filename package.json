@@ -1,6 +1,6 @@
 {
   "name": "@rafa-lopes-pt/leakguard",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "GitHub security hardening toolkit -- pre-commit hooks and CI for secret scanning, keyword blocking, and file type enforcement",
   "type": "module",
   "bin": {
