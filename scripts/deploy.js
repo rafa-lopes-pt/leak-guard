@@ -78,6 +78,40 @@ function deriveCloneUrl(distRepo) {
 }
 
 // ---------------------------------------------------------------------------
+// GitHub Release
+// ---------------------------------------------------------------------------
+
+function createRelease(distRepo, archivePath, archiveName) {
+  if (!commandExists("gh")) {
+    console.log("WARNING: gh CLI not found -- skipping GitHub Release creation.");
+    return;
+  }
+
+  console.log("\nCreating GitHub Release...");
+  try {
+    // Try uploading to an existing "latest" release first
+    run(`gh release upload latest "${archivePath}" --clobber --repo "${distRepo}"`);
+    console.log("  Updated asset on existing 'latest' release.");
+  } catch {
+    // No existing release -- create one
+    try {
+      run(
+        `gh release create latest "${archivePath}" --repo "${distRepo}" ` +
+          `--title "Latest Distribution" --notes "Automated release created by leakguard deploy."`,
+      );
+      console.log("  Created new 'latest' release.");
+    } catch (e) {
+      console.log(`WARNING: Could not create GitHub Release. The archive was pushed to the repo.`);
+      console.log(`  ${e.message}`);
+      return;
+    }
+  }
+
+  console.log(`  Release: https://github.com/${distRepo}/releases/tag/latest`);
+  console.log(`  Direct:  https://github.com/${distRepo}/releases/download/latest/${archiveName}`);
+}
+
+// ---------------------------------------------------------------------------
 // Security scans
 // ---------------------------------------------------------------------------
 
@@ -141,12 +175,18 @@ function scanKeywords(sourceDir) {
 // ---------------------------------------------------------------------------
 
 export async function deploy(args) {
+  const flags = new Set((args || []).filter((a) => a.startsWith("--")));
+  const noRelease = flags.has("--no-release");
+  const skipConfirm = flags.has("--yes") || flags.has("-y") || (args || []).includes("-y");
+  const dryRun = flags.has("--dry-run");
+  const positional = (args || []).filter((a) => !a.startsWith("--") && a !== "-y");
+
   // 1. Resolve source path
   const rc = readRc();
   let sourceDir;
 
-  if (args && args.length > 0) {
-    sourceDir = resolve(args[0]);
+  if (positional.length > 0) {
+    sourceDir = resolve(positional[0]);
   } else if (rc?.distFolder) {
     sourceDir = resolve(REPO_ROOT, rc.distFolder);
   } else if (rc) {
@@ -200,12 +240,17 @@ export async function deploy(args) {
   console.log(`\nDeploy summary:`);
   console.log(`  Source:  ${sourceDir} (${fileCount} file(s))`);
   console.log(`  Target:  ${distRepo}`);
-  console.log(`  Archive: ${archiveName}\n`);
+  console.log(`  Archive: ${archiveName}`);
+  console.log(`  Release: ${noRelease ? "skipped (--no-release)" : "latest (GitHub Release)"}`);
+  if (dryRun) console.log(`  Mode:    dry-run (will not push or create release)`);
+  console.log();
 
-  const proceed = await confirm({ message: "Continue with deploy?", default: true });
-  if (!proceed) {
-    console.log("Deploy cancelled.");
-    return;
+  if (!skipConfirm) {
+    const proceed = await confirm({ message: "Continue with deploy?", default: true });
+    if (!proceed) {
+      console.log("Deploy cancelled.");
+      return;
+    }
   }
 
   // 5. Security scans
@@ -244,6 +289,13 @@ export async function deploy(args) {
     process.exit(1);
   }
 
+  if (dryRun) {
+    console.log(`\nDry run complete. Archive created at: ${archivePath}`);
+    console.log("No changes were pushed.");
+    rmSync(archiveTmp, { recursive: true, force: true });
+    return;
+  }
+
   // 7. Clone -dist repo, replace archive, push
   const cloneTmp = makeTmpDir("clone");
   try {
@@ -280,6 +332,10 @@ export async function deploy(args) {
     run(`git -C "${cloneTmp}" push`, { stdio: "inherit" });
 
     console.log(`\nDeployed ${archiveName} to ${distRepo}.`);
+
+    if (!noRelease) {
+      createRelease(distRepo, archivePath, archiveName);
+    }
   } finally {
     rmSync(archiveTmp, { recursive: true, force: true });
     rmSync(cloneTmp, { recursive: true, force: true });

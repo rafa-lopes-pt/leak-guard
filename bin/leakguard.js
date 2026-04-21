@@ -27,7 +27,10 @@ Commands:
   blacklist <keywords>    Add keywords to the encrypted blocklist
   scan-history [dir]      One-time full-history audit
   zip <files...>          Create encrypted .7z archive
-  deploy [path]           Scan, zip, and push a folder to the -dist repo
+  deploy [path]           Scan, zip, push to -dist repo, and create GitHub Release
+  deploy --no-release     Skip GitHub Release creation
+  deploy --dry-run        Run scans and create archive, but don't push
+  deploy -y, --yes        Skip confirmation prompt
   setup-dist              Set up the public -dist distribution repo
 
 Blacklist options:
