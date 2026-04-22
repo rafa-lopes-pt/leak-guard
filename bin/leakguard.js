@@ -3,6 +3,7 @@
 // Dispatches subcommands via process.argv -- no extra deps.
 
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,54 +11,123 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PKG_ROOT = resolve(__dirname, "..");
 
+const require = createRequire(import.meta.url);
+const c = require("yoctocolors-cjs");
+
+const COMPLETION_SCRIPT = `
+# leakguard bash/zsh completion
+# Enable: eval "$(leakguard completion)"
+
+if [ -n "$ZSH_VERSION" ]; then
+  autoload -Uz bashcompinit && bashcompinit
+fi
+
+_leakguard_completions() {
+  local cur prev commands global_flags
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  commands="init blacklist scan-history zip deploy setup-dist completion"
+  global_flags="--help -h --version -v"
+
+  if [ "$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "$commands $global_flags" -- "$cur") )
+    return
+  fi
+
+  case "\${COMP_WORDS[1]}" in
+    blacklist)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--override -l --list -r --remove" -- "$cur") )
+        return
+      fi
+      ;;
+    deploy)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--yes -y --dry-run --chunked --7z --config" -- "$cur") )
+        return
+      fi
+      ;;
+  esac
+}
+
+complete -o default -F _leakguard_completions leakguard
+`.trim();
+
 function printVersion() {
   const pkg = JSON.parse(readFileSync(resolve(PKG_ROOT, "package.json"), "utf-8"));
   console.log(pkg.version);
 }
 
 function printHelp() {
+  const h = (s) => c.bold(c.cyan(s));
+  const cmd = (s) => c.bold(c.white(s));
+  const dim = (s) => c.dim(s);
+
   console.log(`
-LeakGuard -- GitHub Security Toolkit
+${c.bold("LeakGuard")} ${dim("-- GitHub Security Toolkit")}
 
-Usage:
-  leakguard [command] [options]
+${h("Usage:")}
+  ${cmd("leakguard")} ${dim("[command] [options]")}
 
-Commands:
-  init                    Interactive TUI setup (default)
-  blacklist <keywords>    Add keywords to the encrypted blocklist
-  scan-history [dir]      One-time full-history audit
-  zip <files...>          Create encrypted .7z archive
-  deploy [path]           Scan, zip, push to -dist repo, and create GitHub Release
-  deploy --no-release     Skip GitHub Release creation
-  deploy --dry-run        Run scans and create archive, but don't push
-  deploy -y, --yes        Skip confirmation prompt
-  setup-dist              Set up the public -dist distribution repo
+${h("Commands:")}
+  ${cmd("init")}                    ${dim("Interactive TUI setup (default)")}
+  ${cmd("blacklist <keywords>")}    ${dim("Add keywords to the encrypted blocklist")}
+  ${cmd("scan-history [dir]")}      ${dim("One-time full-history audit")}
+  ${cmd("zip <files...>")}          ${dim("Create encrypted .7z archive")}
+  ${cmd("deploy [path]")}           ${dim("Scan, zip, push to -dist repo")}
+  ${cmd("deploy --chunked")}        ${dim("Deploy as encrypted text chunks (DLP-friendly)")}
+  ${cmd("deploy --7z")}             ${dim("Deploy as single encrypted .7z archive")}
+  ${cmd("deploy --config")}         ${dim("Interactive deploy configuration")}
+  ${cmd("deploy --config k=v")}     ${dim("Set deploy config values directly")}
+  ${cmd("deploy --dry-run")}        ${dim("Run scans and create archive, but don't push")}
+  ${cmd("deploy -y, --yes")}        ${dim("Skip confirmation prompt")}
+  ${cmd("setup-dist")}              ${dim("Set up the public -dist distribution repo")}
+  ${cmd("completion")}              ${dim("Output shell completion script")}
 
-Blacklist options:
-  blacklist kw1 kw2       Add/merge keywords into existing list
-  blacklist kw1 --override  Replace entire list with given keywords
-  blacklist -l, --list    Show current keywords
-  blacklist -r, --remove kw1 kw2  Remove specific keywords
+${h("Blacklist options:")}
+  ${cmd("blacklist kw1 kw2")}       ${dim("Add/merge keywords into existing list")}
+  ${cmd("blacklist kw1 --override")}  ${dim("Replace entire list with given keywords")}
+  ${cmd("blacklist -l, --list")}    ${dim("Show current keywords")}
+  ${cmd("blacklist -r, --remove kw1 kw2")}  ${dim("Remove specific keywords")}
 
-Options:
-  --help, -h          Show this help message
-  --version, -v       Print version
+${h("Deploy config keys:")}
+  ${dim("defaultMode=chunked|7z    Default deploy mode")}
+  ${dim("chunkSize=500000          Chunk size in bytes (min 10000)")}
+  ${dim("archiveName={folder}      Archive name template ({folder} = dist folder)")}
+  ${dim("skipGitleaks=true|false   Skip gitleaks scan")}
+  ${dim("skipKeywords=true|false   Skip keyword scan")}
+  ${dim("commitMessage=...         Commit message template ({archiveName}, {chunkCount})")}
+  ${dim("keepArchive=false|path    Save archive copy before cleanup")}
+  ${dim("createRelease=true|false  Create GitHub Release (7z mode only)")}
+
+${h("Options:")}
+  ${cmd("--help, -h")}          ${dim("Show this help message")}
+  ${cmd("--version, -v")}       ${dim("Print version")}
+
+${h("Shell completion:")}
+  ${dim('eval "$(leakguard completion)"')}                   ${dim("Enable for current session")}
+  ${dim('echo \'eval "$(leakguard completion)"\' >> ~/.bashrc')}   ${dim("Permanent (bash)")}
+  ${dim('echo \'eval "$(leakguard completion)"\' >> ~/.zshrc')}    ${dim("Permanent (zsh)")}
 `);
 }
 
 function printBlacklistHelp() {
+  const h = (s) => c.bold(c.cyan(s));
+  const cmd = (s) => c.bold(c.white(s));
+  const dim = (s) => c.dim(s);
+
   console.log(`
-Usage: leakguard blacklist [options] [keywords...]
+${h("Usage:")} ${cmd("leakguard blacklist")} ${dim("[options] [keywords...]")}
 
-Manage the encrypted keyword blocklist.
+${dim("Manage the encrypted keyword blocklist.")}
 
-Examples:
-  leakguard blacklist foo bar "secret phrase"    Add/merge keywords
-  leakguard blacklist foo bar --override         Replace entire list
-  leakguard blacklist -l                         List current keywords
-  leakguard blacklist --list                     List current keywords
-  leakguard blacklist -r foo bar                 Remove specific keywords
-  leakguard blacklist --remove foo bar           Remove specific keywords
+${h("Examples:")}
+  ${cmd('leakguard blacklist foo bar "secret phrase"')}    ${dim("Add/merge keywords")}
+  ${cmd("leakguard blacklist foo bar --override")}         ${dim("Replace entire list")}
+  ${cmd("leakguard blacklist -l")}                         ${dim("List current keywords")}
+  ${cmd("leakguard blacklist --list")}                     ${dim("List current keywords")}
+  ${cmd("leakguard blacklist -r foo bar")}                 ${dim("Remove specific keywords")}
+  ${cmd("leakguard blacklist --remove foo bar")}           ${dim("Remove specific keywords")}
 `);
 }
 
@@ -92,7 +162,7 @@ switch (command) {
     } else if (subArgs.includes("-r") || subArgs.includes("--remove")) {
       const keywords = subArgs.filter((a) => a !== "-r" && a !== "--remove");
       if (keywords.length === 0) {
-        console.error("ERROR: Specify keywords to remove.");
+        console.error(`  ${c.red("ERROR")} Specify keywords to remove.`);
         printBlacklistHelp();
         process.exit(1);
       }
@@ -134,8 +204,12 @@ switch (command) {
     break;
   }
 
+  case "completion":
+    console.log(COMPLETION_SCRIPT);
+    break;
+
   default:
-    console.error(`Unknown command: ${command}`);
+    console.error(`  ${c.red("ERROR")} Unknown command: ${command}`);
     printHelp();
     process.exit(1);
 }

@@ -5,85 +5,47 @@
 // Cross-platform: works on Linux, macOS, and Windows (Git Bash / PowerShell).
 
 import { select, checkbox, confirm, input } from "@inquirer/prompts";
-import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { platform, arch } from "node:os";
 import { randomBytes } from "node:crypto";
+
+import { REPO_ROOT, commandExists, run, isGitRepo, ensureGitignoreEntry } from "./lib/rc.js";
+import { promptDeployConfig } from "./lib/deploy-config.js";
+import { getInstallCommand } from "./lib/installer.js";
+import { banner, header, ok, info, warn, error, done, skip, hint, cmd, filePath, gap, list, numberedList } from "./lib/ui.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = resolve(__dirname, "..");
-const REPO_ROOT = process.cwd();
-const IS_WINDOWS = platform() === "win32";
+const PKG = JSON.parse(readFileSync(join(PROJECT_ROOT, "package.json"), "utf-8"));
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function commandExists(cmd) {
-  try {
-    execSync(IS_WINDOWS ? `where ${cmd}` : `which ${cmd}`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function run(cmd, opts = {}) {
-  const result = execSync(cmd, { encoding: "utf-8", stdio: "pipe", ...opts });
-  return result == null ? "" : result.trim();
-}
-
-function isGitRepo() {
-  try {
-    run("git rev-parse --show-toplevel");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function ensureGitignoreEntry(entry) {
-  const gitignorePath = join(REPO_ROOT, ".gitignore");
-  let content = "";
-  if (existsSync(gitignorePath)) {
-    content = readFileSync(gitignorePath, "utf-8");
-  }
-  const lines = content.split("\n").map((l) => l.trim());
-  if (!lines.includes(entry)) {
-    const separator = content.endsWith("\n") || content === "" ? "" : "\n";
-    writeFileSync(gitignorePath, content + separator + entry + "\n");
-  }
-}
-
-function printHeader(text) {
-  console.log(`\n--- ${text} ---\n`);
-}
+const TOTAL_STEPS = 7;
 
 function syncGitHubSecret(keyFile) {
   if (!commandExists("gh")) {
-    console.log("\nWARNING: gh CLI not found. Install it to auto-sync the key to GitHub.");
-    console.log("  https://cli.github.com/\n");
+    gap();
+    warn("gh CLI not found. Install it to auto-sync the key to GitHub.");
+    hint("https://cli.github.com/");
     return;
   }
 
   try {
     run("gh auth status");
   } catch {
-    console.log("\nWARNING: gh CLI is not authenticated. Run 'gh auth login' first.");
-    console.log("  The key was NOT synced to GitHub.\n");
+    gap();
+    warn("gh CLI is not authenticated. Run 'gh auth login' first.");
+    hint("The key was NOT synced to GitHub.");
     return;
   }
 
   const key = readFileSync(keyFile, "utf-8").trim();
   try {
     run(`gh secret set LEAKGUARD_SECURITY_KEY --body "${key}"`);
-    console.log("Synced encryption key to GitHub secret LEAKGUARD_SECURITY_KEY.");
+    ok("Synced encryption key to GitHub secret LEAKGUARD_SECURITY_KEY.");
   } catch (e) {
-    console.log(`\nWARNING: Failed to sync key to GitHub: ${e.message}`);
-    console.log("  Set it manually: gh secret set LEAKGUARD_SECURITY_KEY < .security-key\n");
+    warn(`Failed to sync key to GitHub: ${e.message}`);
+    hint(`Set it manually: ${cmd("gh secret set LEAKGUARD_SECURITY_KEY < .security-key")}`);
   }
 }
 
@@ -119,26 +81,23 @@ const DEFAULT_ALLOWED_TYPES = ["application/x-7z-compressed"];
 // ---------------------------------------------------------------------------
 
 async function stepWelcome() {
-  console.log(`
-=====================================
-       LeakGuard Setup
-=====================================
+  banner("LeakGuard Setup");
 
-This tool will configure security scanning for this repository:
-  ${REPO_ROOT}
-
-It will:
-  1. Check/install gitleaks (secret scanner)
-  2. Set up an encryption key for sensitive keyword scanning
-  3. Configure a keyword blocklist (encrypted)
-  4. Configure blocked file types (extensions + MIME types)
-  5. Check/install 7z (for encrypted archives)
-  6. Install pre-commit hook, CI workflow, and gitleaks config
-`);
+  info(`Repository: ${filePath(REPO_ROOT)}`);
+  gap();
+  numberedList([
+    "Check/install gitleaks (secret scanner)",
+    "Set up an encryption key for sensitive keyword scanning",
+    "Configure a keyword blocklist (encrypted)",
+    "Configure blocked file types (extensions + MIME types)",
+    "Check/install 7z (for encrypted archives)",
+    "Install pre-commit hook, CI workflow, and gitleaks config",
+  ]);
+  gap();
 
   if (!isGitRepo()) {
-    console.log("ERROR: Current directory is not a git repository.");
-    console.log("Run this script from the root of a git repository.");
+    error("Current directory is not a git repository.");
+    hint("Run this script from the root of a git repository.");
     process.exit(1);
   }
 
@@ -151,15 +110,15 @@ It will:
 // ---------------------------------------------------------------------------
 
 async function stepGitleaks() {
-  printHeader("Gitleaks");
+  header("Gitleaks", 1, TOTAL_STEPS);
 
   if (commandExists("gitleaks")) {
     const version = run("gitleaks version").replace(/^v/, "");
-    console.log(`gitleaks is installed (v${version}).`);
+    ok(`gitleaks is installed (v${version}).`);
     return;
   }
 
-  console.log("gitleaks is not installed.");
+  warn("gitleaks is not installed.");
 
   const install = await confirm({
     message: "Install gitleaks now?",
@@ -167,51 +126,24 @@ async function stepGitleaks() {
   });
 
   if (!install) {
-    console.log("Skipping gitleaks install. The pre-commit hook will warn when gitleaks is missing.");
+    skip("gitleaks install. The pre-commit hook will warn when gitleaks is missing.");
     return;
   }
 
-  const os = platform();
-  const cpu = arch();
+  const version = PKG.leakguard?.gitleaksVersion || "8.21.2";
+  const { command, fallback } = getInstallCommand("gitleaks", { version });
 
-  if (os === "linux") {
-    const archMap = { x64: "x64", arm64: "arm64" };
-    const gitleaksArch = archMap[cpu] || "x64";
-    const version = "8.21.2";
-    const url = `https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_${gitleaksArch}.tar.gz`;
-    console.log(`Downloading gitleaks v${version} for linux/${gitleaksArch}...`);
+  if (command) {
+    info("Installing gitleaks...");
     try {
-      run(`curl -sSfL "${url}" | sudo tar -xz -C /usr/local/bin gitleaks`);
-      console.log("gitleaks installed to /usr/local/bin/gitleaks");
+      run(command, { stdio: "inherit" });
+      ok("gitleaks installed.");
     } catch (e) {
-      console.log(`Install failed: ${e.message}`);
-      console.log("Install manually: https://github.com/gitleaks/gitleaks#installing");
+      error(`Install failed: ${e.message}`);
+      if (fallback) hint(fallback);
     }
-  } else if (os === "darwin") {
-    if (commandExists("brew")) {
-      console.log("Installing via Homebrew...");
-      try {
-        run("brew install gitleaks");
-        console.log("gitleaks installed.");
-      } catch (e) {
-        console.log(`Install failed: ${e.message}`);
-      }
-    } else {
-      console.log("Install Homebrew first, then run: brew install gitleaks");
-    }
-  } else if (os === "win32") {
-    if (commandExists("scoop")) {
-      console.log("Installing via Scoop...");
-      try {
-        run("scoop install gitleaks");
-        console.log("gitleaks installed.");
-      } catch (e) {
-        console.log(`Install failed: ${e.message}`);
-      }
-    } else {
-      console.log("Install Scoop (https://scoop.sh), then run: scoop install gitleaks");
-      console.log("Or download from: https://github.com/gitleaks/gitleaks/releases");
-    }
+  } else if (fallback) {
+    hint(fallback);
   }
 }
 
@@ -220,12 +152,12 @@ async function stepGitleaks() {
 // ---------------------------------------------------------------------------
 
 async function stepEncryptionKey() {
-  printHeader("Encryption Key");
+  header("Encryption Key", 2, TOTAL_STEPS);
 
   const keyFile = join(REPO_ROOT, ".security-key");
 
   if (existsSync(keyFile)) {
-    console.log(".security-key already exists.");
+    ok(`${filePath(".security-key")} already exists.`);
     const keep = await confirm({ message: "Keep existing key?", default: true });
     if (keep) return;
   }
@@ -241,9 +173,13 @@ async function stepEncryptionKey() {
   let key;
   if (choice === "generate") {
     key = randomBytes(32).toString("base64");
-    console.log("\nGenerated key. Share it with teammates via a secure channel (Signal, 1Password, in person).");
-    console.log("The key will NOT be displayed again after this setup.\n");
-    console.log(`  Key: ${key}\n`);
+    gap();
+    done("Key generated.");
+    hint("Share it with teammates via a secure channel (Signal, 1Password, in person).");
+    hint("The key will NOT be displayed again after this setup.");
+    gap();
+    info(`Key: ${key}`);
+    gap();
   } else {
     key = await input({
       message: "Paste the encryption key from your teammate:",
@@ -253,7 +189,7 @@ async function stepEncryptionKey() {
   }
 
   writeFileSync(keyFile, key + "\n", { mode: 0o600 });
-  console.log("Saved .security-key (permissions: owner-only read/write).");
+  ok(`Saved ${filePath(".security-key")} (permissions: owner-only read/write).`);
   syncGitHubSecret(keyFile);
 }
 
@@ -262,20 +198,22 @@ async function stepEncryptionKey() {
 // ---------------------------------------------------------------------------
 
 async function stepKeywords() {
-  printHeader("Keyword List");
+  header("Keyword List", 3, TOTAL_STEPS);
 
   const encFile = join(REPO_ROOT, "security-keywords.enc");
 
   if (existsSync(encFile)) {
-    console.log("security-keywords.enc already exists.");
-    console.log("Manage keywords with: leakguard blacklist");
+    ok(`${filePath("security-keywords.enc")} already exists.`);
+    hint(`Manage keywords with: ${cmd("leakguard blacklist")}`);
     return;
   }
 
-  console.log("No keyword blocklist configured yet.");
-  console.log("After setup, add keywords with:\n");
-  console.log("  leakguard blacklist keyword1 keyword2 \"keyword 3\"\n");
-  console.log("Run 'leakguard blacklist --help' for all options.");
+  info("No keyword blocklist configured yet.");
+  hint("After setup, add keywords with:");
+  gap();
+  hint(`  ${cmd("leakguard blacklist keyword1 keyword2 \"keyword 3\"")}`);
+  gap();
+  hint(`Run ${cmd("leakguard blacklist --help")} for all options.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -283,7 +221,7 @@ async function stepKeywords() {
 // ---------------------------------------------------------------------------
 
 async function stepFileTypes() {
-  printHeader("File Type Blocking");
+  header("File Type Blocking", 4, TOTAL_STEPS);
 
   const configPath = join(REPO_ROOT, ".security-filetypes");
   if (existsSync(configPath)) {
@@ -353,7 +291,7 @@ ${DEFAULT_ALLOWED_TYPES.join("\n")}
 `;
 
   writeFileSync(configPath, config);
-  console.log("Created .security-filetypes");
+  ok(`Created ${filePath(".security-filetypes")}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -361,86 +299,97 @@ ${DEFAULT_ALLOWED_TYPES.join("\n")}
 // ---------------------------------------------------------------------------
 
 async function step7z() {
-  printHeader("7z (Encrypted Archives)");
+  header("7z (Encrypted Archives)", 5, TOTAL_STEPS);
 
   if (commandExists("7z")) {
-    console.log("7z is installed.");
+    ok("7z is installed.");
     return;
   }
 
-  console.log("7z is not installed.");
-  console.log("7z is needed to create encrypted archives for binary files that can't be scanned.\n");
+  warn("7z is not installed.");
+  hint("7z is needed to create encrypted archives for binary files that can't be scanned.");
+  gap();
 
   const install = await confirm({ message: "Install 7z now?", default: true });
   if (!install) {
-    console.log("Skipping. Install later if you need to commit binary files.");
+    skip("Install later if you need to commit binary files.");
     return;
   }
 
-  const os = platform();
-  if (os === "linux") {
+  const { command, fallback } = getInstallCommand("7z");
+
+  if (command) {
     try {
-      run("sudo apt-get update -qq && sudo apt-get install -y -qq p7zip-full", { stdio: "inherit" });
-      console.log("7z installed.");
-    } catch (e) {
-      console.log("Install failed. Try manually: sudo apt-get install p7zip-full");
+      run(command, { stdio: "inherit" });
+      ok("7z installed.");
+    } catch {
+      error(`Install failed. ${fallback || ""}`);
     }
-  } else if (os === "darwin") {
-    if (commandExists("brew")) {
-      try {
-        run("brew install p7zip", { stdio: "inherit" });
-        console.log("7z installed.");
-      } catch (e) {
-        console.log("Install failed. Try: brew install p7zip");
-      }
-    } else {
-      console.log("Install Homebrew first, then run: brew install p7zip");
-    }
-  } else {
-    console.log("On Windows, download 7-Zip from: https://7-zip.org");
-    console.log("After installing, add 7z.exe to your PATH.");
+  } else if (fallback) {
+    hint(fallback);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step 7: Summary and execution
+// Step 7: Deploy config
+// ---------------------------------------------------------------------------
+
+async function stepDeployConfig() {
+  header("Deploy Configuration", 6, TOTAL_STEPS);
+
+  const configure = await confirm({
+    message: "Configure deploy defaults now?",
+    default: false,
+  });
+
+  if (!configure) {
+    skip(`Configure later with: ${cmd("leakguard deploy --config")}`);
+    return;
+  }
+
+  await promptDeployConfig();
+}
+
+// ---------------------------------------------------------------------------
+// Step 8: Summary and execution
 // ---------------------------------------------------------------------------
 
 async function stepExecute() {
-  printHeader("Summary");
+  header("Summary", 7, TOTAL_STEPS);
 
   const actions = [];
 
   // What we'll do
-  actions.push("Add .security-key to .gitignore");
+  actions.push(`Add ${filePath(".security-key")} to .gitignore`);
 
   const gitleaksConfig = join(REPO_ROOT, ".gitleaks.toml");
   if (!existsSync(gitleaksConfig)) {
-    actions.push("Copy .gitleaks.toml into repo");
+    actions.push(`Copy ${filePath(".gitleaks.toml")} into repo`);
   }
 
   const workflowDir = join(REPO_ROOT, ".github", "workflows");
   const workflowDest = join(workflowDir, "secret-scan.yml");
   if (!existsSync(workflowDest)) {
-    actions.push("Copy secret-scan.yml to .github/workflows/");
+    actions.push(`Copy ${filePath("secret-scan.yml")} to .github/workflows/`);
   }
 
   const hookDir = join(REPO_ROOT, ".git", "hooks");
   const hookDest = join(hookDir, "pre-commit");
   actions.push(existsSync(hookDest) ? "Replace existing pre-commit hook" : "Install pre-commit hook");
 
-  console.log("The following actions will be performed:\n");
-  actions.forEach((a) => console.log(`  - ${a}`));
-  console.log();
+  info("The following actions will be performed:");
+  gap();
+  list(actions);
+  gap();
 
   const proceed = await confirm({ message: "Proceed?", default: true });
   if (!proceed) {
-    console.log("Setup cancelled.");
+    warn("Setup cancelled.");
     process.exit(0);
   }
 
   // Execute
-  console.log();
+  gap();
 
   // .gitignore entries
   const gitignoreEntries = [
@@ -450,39 +399,41 @@ async function stepExecute() {
   for (const entry of gitignoreEntries) {
     ensureGitignoreEntry(entry);
   }
-  console.log("Updated .gitignore");
+  ok(`Updated ${filePath(".gitignore")}`);
 
   // .gitleaks.toml
   if (!existsSync(gitleaksConfig)) {
     copyFileSync(join(PROJECT_ROOT, ".gitleaks.toml"), gitleaksConfig);
-    console.log("Copied .gitleaks.toml");
+    ok(`Copied ${filePath(".gitleaks.toml")}`);
   }
 
   // Workflow
   if (!existsSync(workflowDest)) {
     mkdirSync(workflowDir, { recursive: true });
     copyFileSync(join(PROJECT_ROOT, "workflows", "secret-scan.yml"), workflowDest);
-    console.log("Copied .github/workflows/secret-scan.yml");
+    ok(`Copied ${filePath(".github/workflows/secret-scan.yml")}`);
   }
 
   // Pre-commit hook
   mkdirSync(hookDir, { recursive: true });
   copyFileSync(join(PROJECT_ROOT, "scripts", "hooks", "pre-commit"), hookDest);
   chmodSync(hookDest, 0o755);
-  console.log("Installed pre-commit hook");
+  ok("Installed pre-commit hook");
 
   // Done
-  printHeader("Setup Complete");
+  banner("Setup Complete");
 
-  console.log("Files to commit:");
-  console.log("  - .gitignore");
-  if (existsSync(join(REPO_ROOT, ".gitleaks.toml"))) console.log("  - .gitleaks.toml");
-  if (existsSync(join(REPO_ROOT, ".security-filetypes"))) console.log("  - .security-filetypes");
+  info("Files to commit:");
+  const commitFiles = [".gitignore"];
+  if (existsSync(join(REPO_ROOT, ".gitleaks.toml"))) commitFiles.push(".gitleaks.toml");
+  if (existsSync(join(REPO_ROOT, ".security-filetypes"))) commitFiles.push(".security-filetypes");
   if (existsSync(join(REPO_ROOT, ".github", "workflows", "secret-scan.yml")))
-    console.log("  - .github/workflows/secret-scan.yml");
-  if (existsSync(join(REPO_ROOT, "security-keywords.enc"))) console.log("  - security-keywords.enc");
+    commitFiles.push(".github/workflows/secret-scan.yml");
+  if (existsSync(join(REPO_ROOT, "security-keywords.enc"))) commitFiles.push("security-keywords.enc");
+  list(commitFiles.map(f => filePath(f)));
 
-  console.log("\nDo NOT commit .security-key (it is gitignored).");
+  gap();
+  warn(`Do NOT commit ${filePath(".security-key")} (it is gitignored).`);
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +448,7 @@ async function main() {
     await stepKeywords();
     await stepFileTypes();
     await step7z();
+    await stepDeployConfig();
     await stepExecute();
   } catch (e) {
     if (e.name === "ExitPromptError") {

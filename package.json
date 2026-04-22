@@ -1,6 +1,6 @@
 {
-  "name": "@rafa-lopes-pt/leakguard",
-  "version": "1.3.1",
+  "name": "leakguard",
+  "version": "0.0.0-beta.0",
   "description": "GitHub security hardening toolkit -- pre-commit hooks and CI for secret scanning, keyword blocking, and file type enforcement",
   "type": "module",
   "bin": {
@@ -8,14 +8,7 @@
   },
   "files": [
     "bin/",
-    "scripts/setup.js",
-    "scripts/encrypt-keywords.js",
-    "scripts/scan-history.js",
-    "scripts/create-zip.js",
-    "scripts/deploy.js",
-    "scripts/setup-dist.js",
-    "scripts/hooks/pre-commit",
-    "scripts/hooks/pre-commit-dist",
+    "scripts/",
     ".gitleaks.toml",
     ".security-filetypes.default",
     "workflows/",
@@ -26,10 +19,15 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "leakguard": {
+    "gitleaksVersion": "8.21.2"
+  },
   "scripts": {
     "setup": "node scripts/setup.js",
     "encrypt-keywords": "node scripts/encrypt-keywords.js",
-    "scan-history": "node scripts/scan-history.js"
+    "scan-history": "node scripts/scan-history.js",
+    "test": "node --test 'tests/**/*.test.js'",
+    "lint": "eslint ."
   },
   "keywords": [
     "security",
@@ -55,5 +53,10 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.2.1",
+    "globals": "^17.5.0"
   }
 }

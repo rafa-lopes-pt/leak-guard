@@ -7,6 +7,11 @@
 set -euo pipefail
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
+AUDIT_LOG="${REPO_ROOT}/.git/leakguard-audit.log"
+
+audit() {
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" >> "$AUDIT_LOG"
+}
 
 # Colors (disable if not a terminal)
 if [[ -t 1 ]]; then
@@ -20,6 +25,7 @@ else
 fi
 
 fail() {
+    audit "BLOCKED: $1"
     echo -e "${RED}${BOLD}COMMIT BLOCKED${RESET}: $1"
     exit 1
 }
@@ -29,6 +35,7 @@ warn() {
 }
 
 pass() {
+    audit "PASS: $1"
     echo -e "${GREEN}PASS${RESET}: $1"
 }
 
@@ -45,9 +52,18 @@ BLOCKED=0
 # SCAN 1: Blocked file types (extension + MIME type)
 # ---------------------------------------------------------------------------
 FILETYPES_CONFIG="${REPO_ROOT}/.security-filetypes"
+HAS_FILE_CMD=1
+if ! command -v file >/dev/null 2>&1; then
+    HAS_FILE_CMD=0
+    warn "'file' command not found. MIME type checking will be skipped; only extension-based blocking will apply."
+fi
 
 if [[ -f "$FILETYPES_CONFIG" ]]; then
     # Parse config sections
+    # IMPORTANT: This config parser is duplicated in:
+    #   - scripts/hooks/pre-commit (here)
+    #   - workflows/secret-scan.yml
+    # If you change the format, update both.
     declare -a BLOCKED_EXTS=()
     declare -a BLOCKED_MIMES=()
     declare -a ALLOWED_TYPES=()
@@ -102,7 +118,8 @@ if [[ -f "$FILETYPES_CONFIG" ]]; then
             fi
         done
 
-        # MIME type detection
+        # MIME type detection (skip if 'file' command not available)
+        [[ $HAS_FILE_CMD -eq 0 ]] && continue
         MIME=$(file --mime-type -b "${REPO_ROOT}/${filepath}" 2>/dev/null || echo "unknown")
 
         # Check allowed MIME types first
@@ -149,6 +166,7 @@ if [[ -f "$ENC_FILE" ]]; then
         TEMP_KEYWORDS=$(mktemp)
         trap "rm -f '$TEMP_KEYWORDS'" EXIT
 
+        # Crypto params must match scripts/lib/crypto.js
         if openssl enc -d -aes-256-cbc -pbkdf2 \
             -in "$ENC_FILE" \
             -pass "file:${KEY_FILE}" \
@@ -157,27 +175,41 @@ if [[ -f "$ENC_FILE" ]]; then
             KEYWORD_BLOCKED=0
             DIFF_CONTENT=$(git diff --cached --unified=0)
 
-            while IFS= read -r keyword || [[ -n "$keyword" ]]; do
-                # Skip comments and empty lines
-                [[ -z "$keyword" || "$keyword" =~ ^[[:space:]]*# ]] && continue
-                keyword=$(echo "$keyword" | xargs)
-                [[ -z "$keyword" ]] && continue
+            # Build a clean pattern file (strip comments/blanks) for single-pass grep
+            PATTERN_FILE=$(mktemp)
+            trap "rm -f '$TEMP_KEYWORDS' '$PATTERN_FILE'" EXIT
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+                line=$(echo "$line" | xargs)
+                [[ -z "$line" ]] && continue
+                echo "$line" >> "$PATTERN_FILE"
+            done < "$TEMP_KEYWORDS"
 
-                # Search staged diff content (case-insensitive)
-                if echo "$DIFF_CONTENT" | grep -qi "$keyword" 2>/dev/null; then
-                    # Find which file(s) contain the match
-                    while IFS= read -r filepath; do
-                        [[ -z "$filepath" ]] && continue
-                        [[ ! -f "${REPO_ROOT}/${filepath}" ]] && continue
-                        if git diff --cached -- "$filepath" | grep -qi "$keyword" 2>/dev/null; then
+            # Single-pass: find all matching keywords in the full diff at once
+            MATCHED_KEYWORDS=$(grep -ioFf "$PATTERN_FILE" <<< "$DIFF_CONTENT" 2>/dev/null | sort -uf || true)
+
+            if [[ -n "$MATCHED_KEYWORDS" ]]; then
+                # Cache per-file diffs for matched files
+                declare -A FILE_DIFFS
+                while IFS= read -r filepath; do
+                    [[ -z "$filepath" ]] && continue
+                    [[ ! -f "${REPO_ROOT}/${filepath}" ]] && continue
+                    FILE_DIFFS["$filepath"]=$(git diff --cached -- "$filepath")
+                done <<< "$STAGED_FILES"
+
+                # For each matched keyword, identify which files contain it
+                while IFS= read -r keyword; do
+                    [[ -z "$keyword" ]] && continue
+                    for filepath in "${!FILE_DIFFS[@]}"; do
+                        if echo "${FILE_DIFFS[$filepath]}" | grep -qiF "$keyword" 2>/dev/null; then
                             echo -e "  ${RED}Keyword match${RESET}: '${keyword}' in ${filepath}"
                             KEYWORD_BLOCKED=1
                         fi
-                    done <<< "$STAGED_FILES"
-                fi
-            done < "$TEMP_KEYWORDS"
+                    done
+                done <<< "$MATCHED_KEYWORDS"
+            fi
 
-            rm -f "$TEMP_KEYWORDS"
+            rm -f "$TEMP_KEYWORDS" "$PATTERN_FILE"
 
             if [[ $KEYWORD_BLOCKED -eq 1 ]]; then
                 fail "Sensitive keywords detected in staged changes. Remove them before committing."

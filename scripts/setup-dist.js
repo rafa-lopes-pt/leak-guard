@@ -3,57 +3,18 @@
 // Creates a -dist repo on GitHub and configures the local project to use it.
 
 import { confirm, input } from "@inquirer/prompts";
-import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, copyFileSync, mkdirSync, chmodSync, rmSync, writeFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
+import { REPO_ROOT, commandExists, run, isGitRepo, ensureGitignoreEntry, writeRc } from "./lib/rc.js";
+import { banner, ok, info, warn, error, hint, label, filePath, gap } from "./lib/ui.js";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = resolve(__dirname, "..");
-const REPO_ROOT = process.cwd();
-const IS_WINDOWS = process.platform === "win32";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function commandExists(cmd) {
-  try {
-    execSync(IS_WINDOWS ? `where ${cmd}` : `which ${cmd}`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function run(cmd, opts = {}) {
-  const result = execSync(cmd, { encoding: "utf-8", stdio: "pipe", ...opts });
-  return result == null ? "" : result.trim();
-}
-
-function isGitRepo() {
-  try {
-    run("git rev-parse --show-toplevel");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function ensureGitignoreEntry(entry) {
-  const gitignorePath = join(REPO_ROOT, ".gitignore");
-  let content = "";
-  if (existsSync(gitignorePath)) {
-    content = readFileSync(gitignorePath, "utf-8");
-  }
-  const lines = content.split("\n").map((l) => l.trim());
-  if (!lines.includes(entry)) {
-    const separator = content.endsWith("\n") || content === "" ? "" : "\n";
-    writeFileSync(gitignorePath, content + separator + entry + "\n");
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Main
@@ -72,29 +33,25 @@ export async function setupDist() {
 }
 
 async function run_setup() {
-  console.log(`
-=====================================
-   LeakGuard Distribution Setup
-=====================================
-`);
+  banner("LeakGuard Distribution Setup");
 
   // 1. Verify git repo
   if (!isGitRepo()) {
-    console.error("ERROR: Current directory is not a git repository.");
+    error("Current directory is not a git repository.");
     process.exit(1);
   }
 
   // 2. Check gh CLI
   if (!commandExists("gh")) {
-    console.error("ERROR: gh CLI is required for distribution setup.");
-    console.error("  Install it from: https://cli.github.com/");
+    error("gh CLI is required for distribution setup.");
+    hint("Install it from: https://cli.github.com/");
     process.exit(1);
   }
 
   try {
     run("gh auth status");
   } catch {
-    console.error("ERROR: gh CLI is not authenticated. Run 'gh auth login' first.");
+    error("gh CLI is not authenticated. Run 'gh auth login' first.");
     process.exit(1);
   }
 
@@ -111,12 +68,12 @@ async function run_setup() {
     }
     [org, repo] = fullName.split("/");
   } catch {
-    console.error("ERROR: Could not parse git remote origin.");
+    error("Could not parse git remote origin.");
     process.exit(1);
   }
 
   if (!org || !repo) {
-    console.error("ERROR: Could not determine org/repo from remote.");
+    error("Could not determine org/repo from remote.");
     process.exit(1);
   }
 
@@ -124,15 +81,17 @@ async function run_setup() {
   const distRepoName = `${repo}-dist`;
   const distRepo = `${org}/${distRepoName}`;
 
-  console.log(`  Source repo: ${org}/${repo}`);
-  console.log(`  Dist repo:   ${distRepo}\n`);
+  label("Source repo", `${org}/${repo}`);
+  label("Dist repo", distRepo);
+  gap();
 
   // 5. Check if -dist repo already exists
   let repoExists = false;
   try {
     run(`gh repo view ${distRepo}`);
     repoExists = true;
-    console.log(`${distRepo} already exists on GitHub.\n`);
+    ok(`${distRepo} already exists on GitHub.`);
+    gap();
   } catch {
     // repo doesn't exist yet
   }
@@ -145,15 +104,16 @@ async function run_setup() {
     });
 
     if (!create) {
-      console.log("Aborted. Create the repo manually, then run `leakguard setup-dist` again.");
+      warn("Aborted. Create the repo manually, then run `leakguard setup-dist` again.");
       return;
     }
 
     try {
       run(`gh repo create ${distRepo} --public --confirm`);
-      console.log(`Created ${distRepo}.\n`);
+      ok(`Created ${distRepo}.`);
+      gap();
     } catch (e) {
-      console.error(`ERROR: Failed to create repo: ${e.message}`);
+      error(`Failed to create repo: ${e.message}`);
       process.exit(1);
     }
   }
@@ -178,33 +138,26 @@ async function run_setup() {
   if (!existsSync(folderPath)) {
     mkdirSync(folderPath, { recursive: true });
     writeFileSync(join(folderPath, ".gitkeep"), "");
-    console.log(`Created ${distFolder}/ with .gitkeep`);
+    ok(`Created ${filePath(distFolder + "/")} with .gitkeep`);
   }
 
   // 10. Add the directory to .gitignore
   ensureGitignoreEntry(distFolder + "/");
 
   // 11. Write .leakguardrc
-  const rcPath = join(REPO_ROOT, ".leakguardrc");
-  const rc = existsSync(rcPath) ? JSON.parse(readFileSync(rcPath, "utf-8")) : {};
-  rc.distFolder = distFolder;
-  rc.distRepo = distRepo;
-  writeFileSync(rcPath, JSON.stringify(rc, null, 2) + "\n");
+  writeRc({ distFolder, distRepo });
 
   // 12. Summary
-  console.log(`
---- Distribution Setup Complete ---
-
-  Dist repo:   ${distRepo}
-  Dist folder: ${distFolder}/
-  Config:      .leakguardrc
-
-Add files to ${distFolder}/, then run \`leakguard deploy\` to publish.
-`);
+  banner("Distribution Setup Complete");
+  label("Dist repo", distRepo);
+  label("Dist folder", distFolder + "/");
+  label("Config", filePath(".leakguardrc"));
+  gap();
+  hint(`Add files to ${filePath(distFolder + "/")}, then run \`leakguard deploy\` to publish.`);
 }
 
 async function bootstrapDistRepo(distRepo) {
-  const cloneTmp = join(tmpdir(), `leakguard-setup-dist-${Date.now()}`);
+  const cloneTmp = join(tmpdir(), `leakguard-setup-dist-${randomBytes(8).toString("hex")}`);
 
   try {
     // Derive clone URL from current repo's remote style
@@ -218,7 +171,7 @@ async function bootstrapDistRepo(distRepo) {
       cloneUrl = `${url.protocol}//${url.host}/${distRepo}.git`;
     }
 
-    console.log("Bootstrapping -dist repo with leakguard config...");
+    info("Bootstrapping -dist repo with leakguard config...");
     run(`git clone "${cloneUrl}" "${cloneTmp}"`, { stdio: "pipe" });
 
     // Copy .gitleaks.toml
@@ -262,12 +215,16 @@ async function bootstrapDistRepo(distRepo) {
     if (status) {
       run(`git -C "${cloneTmp}" commit -m "Add leakguard security config"`);
       run(`git -C "${cloneTmp}" push`, { stdio: "pipe" });
-      console.log("Pushed leakguard config to -dist repo.\n");
+      ok("Pushed leakguard config to -dist repo.");
+      gap();
     } else {
-      console.log("-dist repo already has leakguard config.\n");
+      info("-dist repo already has leakguard config.");
+      gap();
     }
   } catch (e) {
-    console.error(`WARNING: Could not bootstrap -dist repo: ${e.message}`);
+    warn(`Could not bootstrap -dist repo: ${e.message}`);
+    const proceed = await confirm({ message: "Continue without bootstrap?", default: false });
+    if (!proceed) process.exit(1);
   } finally {
     rmSync(cloneTmp, { recursive: true, force: true });
   }

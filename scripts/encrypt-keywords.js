@@ -3,114 +3,66 @@
 // Encrypts/decrypts security-keywords.enc using .security-key (AES-256-CBC, PBKDF2).
 // No plaintext files ever touch disk -- encryption/decryption uses stdin/stdout pipes.
 
-import { execSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 
-const REPO_ROOT = process.cwd();
-const KEY_FILE = join(REPO_ROOT, ".security-key");
-const ENC_FILE = join(REPO_ROOT, "security-keywords.enc");
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-function requireKey() {
-  if (!existsSync(KEY_FILE)) {
-    console.error("ERROR: Encryption key not found (.security-key).");
-    console.error("Run 'leakguard init' first, or create .security-key with your passphrase.");
-    process.exit(1);
-  }
-}
-
-function decryptKeywords() {
-  if (!existsSync(ENC_FILE)) {
-    return null;
-  }
-
-  try {
-    const raw = execSync(
-      `openssl enc -aes-256-cbc -pbkdf2 -d -in "${ENC_FILE}" -pass "file:${KEY_FILE}"`,
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
-    );
-    return raw
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith("#"));
-  } catch {
-    console.error("ERROR: Failed to decrypt security-keywords.enc (wrong key?).");
-    process.exit(1);
-  }
-}
-
-function encryptList(keywords) {
-  const content = keywords.join("\n") + "\n";
-  const result = spawnSync(
-    "openssl",
-    ["enc", "-aes-256-cbc", "-pbkdf2", "-salt", "-out", ENC_FILE, "-pass", `file:${KEY_FILE}`],
-    { input: content, stdio: ["pipe", "pipe", "pipe"] },
-  );
-  if (result.status !== 0) {
-    console.error(`Encryption failed: ${result.stderr?.toString() || "unknown error"}`);
-    process.exit(1);
-  }
-}
-
-function dedup(keywords) {
-  const seen = new Map();
-  for (const kw of keywords) {
-    const lower = kw.toLowerCase();
-    if (!seen.has(lower)) {
-      seen.set(lower, kw);
-    }
-  }
-  return [...seen.values()];
-}
+import { ENC_FILE } from "./lib/rc.js";
+import { requireKeyFile, decryptKeywords, encryptKeywords as encryptList } from "./lib/crypto.js";
+import { ok, info, warn, error, done, hint, filePath, list } from "./lib/ui.js";
 
 // ---------------------------------------------------------------------------
 // Exported functions
 // ---------------------------------------------------------------------------
 
 export function encryptKeywords({ keywords, override = false }) {
-  requireKey();
+  requireKeyFile();
 
   if (!override && existsSync(ENC_FILE)) {
     const existing = decryptKeywords();
-    const merged = dedup([...existing, ...keywords]);
-    const added = merged.length - existing.length;
-    encryptList(merged);
-    console.log(`Merged: ${added} new + ${existing.length} existing = ${merged.length} total keywords.`);
+    if (!existing) {
+      error("Failed to decrypt security-keywords.enc (wrong key?).");
+      process.exit(1);
+    }
+    const unique = encryptList([...existing, ...keywords]);
+    const added = unique.length - existing.length;
+    ok(`Merged: ${added} new + ${existing.length} existing = ${unique.length} total keywords.`);
   } else {
-    const unique = dedup(keywords);
-    encryptList(unique);
-    console.log(`Encrypted ${unique.length} keyword(s) -> security-keywords.enc`);
+    const unique = encryptList(keywords);
+    ok(`Encrypted ${unique.length} keyword(s) -> ${filePath("security-keywords.enc")}`);
   }
 
-  console.log("Remember to commit security-keywords.enc.");
+  hint(`Remember to commit ${filePath("security-keywords.enc")}.`);
 }
 
 export function listKeywords() {
-  requireKey();
+  requireKeyFile();
+
+  if (!existsSync(ENC_FILE)) {
+    info("No keywords configured. Use 'leakguard blacklist <keywords>' to add some.");
+    return;
+  }
 
   const keywords = decryptKeywords();
   if (!keywords) {
-    console.log("No keywords configured. Use 'leakguard blacklist <keywords>' to add some.");
-    return;
+    error("Failed to decrypt security-keywords.enc (wrong key?).");
+    process.exit(1);
   }
 
-  console.log(`${keywords.length} keyword(s):\n`);
-  for (const kw of keywords) {
-    console.log(`  ${kw}`);
-  }
+  info(`${keywords.length} keyword(s):`);
+  list(keywords, 4);
 }
 
 export function removeKeywords({ keywords }) {
-  requireKey();
+  requireKeyFile();
+
+  if (!existsSync(ENC_FILE)) {
+    info("No keywords configured. Nothing to remove.");
+    return;
+  }
 
   const existing = decryptKeywords();
   if (!existing) {
-    console.log("No keywords configured. Nothing to remove.");
-    return;
+    error("Failed to decrypt security-keywords.enc (wrong key?).");
+    process.exit(1);
   }
 
   const toRemove = new Set(keywords.map((k) => k.toLowerCase()));
@@ -131,14 +83,14 @@ export function removeKeywords({ keywords }) {
 
   if (removed.length > 0) {
     encryptList(remaining);
-    console.log(`Removed: ${removed.join(", ")}`);
+    done(`Removed: ${removed.join(", ")}`);
   }
   if (notFound.length > 0) {
-    console.log(`Not found: ${notFound.join(", ")}`);
+    warn(`Not found: ${notFound.join(", ")}`);
   }
 
-  console.log(`${remaining.length} keyword(s) remaining.`);
+  info(`${remaining.length} keyword(s) remaining.`);
   if (removed.length > 0) {
-    console.log("Remember to commit security-keywords.enc.");
+    hint(`Remember to commit ${filePath("security-keywords.enc")}.`);
   }
 }

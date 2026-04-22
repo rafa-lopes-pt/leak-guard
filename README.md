@@ -37,6 +37,7 @@ It is designed to provide a **practical layer of protection** where none exists 
     - [Prerequisites](#prerequisites)
     - [Install](#install)
     - [CLI Reference](#cli-reference)
+    - [Shell Completion](#shell-completion)
     - [For New Developers Joining the Org](#for-new-developers-joining-the-org)
     - [Adding or Updating Keywords](#adding-or-updating-keywords)
     - [One-Time History Audit](#one-time-history-audit)
@@ -210,8 +211,9 @@ Unscannable binary files (images, videos, PDFs, etc.) must be shipped inside an 
 | `.security-key` | Decryption passphrase | No (gitignored) |
 | `.github/workflows/secret-scan.yml` | CI workflow | Yes |
 | `.git/hooks/pre-commit` | Local pre-commit hook | No (per-machine) |
-| `.leakguardrc` | Distribution config (distFolder, distRepo) | Yes |
+| `.leakguardrc` | Distribution and deploy config | Yes |
 | `.git/hooks/pre-commit-dist` | Pre-commit hook for `-dist` repos (allowlist only) | No (per-machine) |
+| `.git/leakguard-audit.log` | Timestamped log of scan pass/block decisions | No (inside `.git/`) |
 
 ---
 
@@ -230,16 +232,16 @@ Unscannable binary files (images, videos, PDFs, etc.) must be shipped inside an 
 Install globally:
 
 ```bash
-npm install -g @rafa-lopes-pt/leakguard
+npm install -g leakguard
 ```
 
 Or run any command on-demand with `npx` (no global install needed):
 
 ```bash
-npx @rafa-lopes-pt/leakguard [command] [options]
+npx leakguard [command] [options]
 ```
 
-If installed globally, replace `npx @rafa-lopes-pt/leakguard` with just `leakguard` in all examples below.
+If installed globally, replace `npx leakguard` with just `leakguard` in all examples below.
 
 ### CLI Reference
 
@@ -252,40 +254,90 @@ If installed globally, replace `npx @rafa-lopes-pt/leakguard` with just `leakgua
 | `leakguard blacklist -r kw1 kw2` | Remove specific keywords |
 | `leakguard scan-history [dir...]` | One-time full-history audit |
 | `leakguard zip <files...>` | Create encrypted .7z archive |
-| `leakguard deploy [path]` | Scan, zip, and push to the public `-dist` repo |
+| `leakguard deploy [path]` | Scan, archive, and push to the public `-dist` repo |
+| `leakguard deploy --chunked` | Deploy as encrypted text chunks (DLP-friendly) |
+| `leakguard deploy --7z` | Deploy as a single encrypted .7z archive |
+| `leakguard deploy --config` | Interactive deploy configuration |
+| `leakguard deploy --config k=v` | Set deploy config values directly |
+| `leakguard deploy --dry-run` | Run scans and create archive, but don't push |
+| `leakguard deploy -y` / `--yes` | Skip confirmation prompt |
+| `leakguard setup-dist` | Set up the public `-dist` distribution repo |
+| `leakguard completion` | Output shell completion script (bash/zsh) |
 | `leakguard --help` | Show help |
 | `leakguard --version` | Print version |
+
+**Deploy config keys** (set via `leakguard deploy --config key=value`):
+
+| Key | Values | Description |
+|-----|--------|-------------|
+| `defaultMode` | `chunked` / `7z` | Default deploy mode |
+| `chunkSize` | integer (min 10000) | Chunk size in bytes |
+| `archiveName` | string | Archive name template (`{folder}` = dist folder) |
+| `skipGitleaks` | `true` / `false` | Skip gitleaks scan during deploy |
+| `skipKeywords` | `true` / `false` | Skip keyword scan during deploy |
+| `commitMessage` | string | Commit message template (`{archiveName}`, `{chunkCount}`) |
+| `keepArchive` | `false` / path | Save archive copy before cleanup |
+| `createRelease` | `true` / `false` | Create GitHub Release (7z mode only) |
 
 **Examples with npx:**
 
 ```bash
 # Show help
-npx @rafa-lopes-pt/leakguard --help
+npx leakguard --help
 
 # Interactive setup (run from your repo root)
-npx @rafa-lopes-pt/leakguard init
+npx leakguard init
 
 # Add keywords to the encrypted blocklist
-npx @rafa-lopes-pt/leakguard blacklist "client name" project-codename internal-id
+npx leakguard blacklist "client name" project-codename internal-id
 
 # List current keywords
-npx @rafa-lopes-pt/leakguard blacklist --list
+npx leakguard blacklist --list
 
 # Remove keywords
-npx @rafa-lopes-pt/leakguard blacklist --remove "client name"
+npx leakguard blacklist --remove "client name"
 
 # Replace entire keyword list
-npx @rafa-lopes-pt/leakguard blacklist kw1 kw2 --override
+npx leakguard blacklist kw1 kw2 --override
 
 # Full-history audit on specific repos
-npx @rafa-lopes-pt/leakguard scan-history /path/to/repo1 /path/to/repo2
+npx leakguard scan-history /path/to/repo1 /path/to/repo2
 
 # Package binary files into encrypted .7z
-npx @rafa-lopes-pt/leakguard zip assets/ config.dat
+npx leakguard zip assets/ config.dat
 
 # Deploy curated content to the public -dist repo
-npx @rafa-lopes-pt/leakguard deploy
+npx leakguard deploy
+
+# Deploy in chunked mode (encrypted text chunks, DLP-friendly)
+npx leakguard deploy --chunked
+
+# Dry-run deploy (scans and archives but doesn't push)
+npx leakguard deploy --dry-run
+
+# Set up the -dist repo independently
+npx leakguard setup-dist
 ```
+
+### Shell Completion
+
+LeakGuard provides tab completion for bash and zsh, covering all commands and subcommand flags.
+
+**Enable for current session:**
+```bash
+eval "$(leakguard completion)"
+```
+
+**Enable permanently:**
+```bash
+# bash
+echo 'eval "$(leakguard completion)"' >> ~/.bashrc
+
+# zsh
+echo 'eval "$(leakguard completion)"' >> ~/.zshrc
+```
+
+**Note:** Shell completion requires a global install (`npm install -g leakguard`). It does not work with `npx` because the shell binds completions to the command name `leakguard`, but `npx` makes the shell see `npx` as the command instead. This is a universal limitation -- no npm CLI tool supports tab completion via `npx`.
 
 ### For New Developers Joining the Org
 
@@ -294,7 +346,7 @@ npx @rafa-lopes-pt/leakguard deploy
 2. **Run setup on each repo** you work with:
    ```bash
    cd /path/to/your-repo
-   npx @rafa-lopes-pt/leakguard init
+   npx leakguard init
    ```
 
 3. The TUI will walk you through:
@@ -315,20 +367,20 @@ npx @rafa-lopes-pt/leakguard deploy
 Add or merge keywords directly from the CLI (no plaintext file needed):
 
 ```bash
-npx @rafa-lopes-pt/leakguard blacklist "client name" project-codename internal-id
+npx leakguard blacklist "client name" project-codename internal-id
 ```
 
 To replace the entire list instead of merging:
 
 ```bash
-npx @rafa-lopes-pt/leakguard blacklist kw1 kw2 kw3 --override
+npx leakguard blacklist kw1 kw2 kw3 --override
 ```
 
 To view or remove keywords:
 
 ```bash
-npx @rafa-lopes-pt/leakguard blacklist --list
-npx @rafa-lopes-pt/leakguard blacklist --remove "client name" internal-id
+npx leakguard blacklist --list
+npx leakguard blacklist --remove "client name" internal-id
 ```
 
 After any change, commit `security-keywords.enc` (never the plaintext).
@@ -339,10 +391,10 @@ Scan existing repos for previously committed secrets:
 
 ```bash
 # Scan specific repos
-npx @rafa-lopes-pt/leakguard scan-history /path/to/repo1 /path/to/repo2
+npx leakguard scan-history /path/to/repo1 /path/to/repo2
 
 # Scan all git repos in current directory
-npx @rafa-lopes-pt/leakguard scan-history
+npx leakguard scan-history
 ```
 
 Reports are saved to `./reports/`.
@@ -353,40 +405,55 @@ Binary files that need to be in the repo must be packaged in an encrypted `.7z` 
 
 ```bash
 # Single file
-npx @rafa-lopes-pt/leakguard zip myfile.bin
+npx leakguard zip myfile.bin
 
 # Multiple files or directories
-npx @rafa-lopes-pt/leakguard zip assets/ config.dat
+npx leakguard zip assets/ config.dat
 ```
 
 You will be prompted for a password. The archive is created in the current directory.
 
 ### Public Distribution (Private Repo to Public `-dist` Repo)
 
-Organizations often need to share curated content from a private repo publicly without exposing the full repo. LeakGuard supports this through a **distribution workflow**: a designated folder in your private repo is scanned for secrets, packaged into an encrypted `.7z` archive, and pushed to a companion public `-dist` repo.
+Organizations often need to share curated content from a private repo publicly without exposing the full repo. LeakGuard supports this through a **distribution workflow**: a designated folder in your private repo is scanned for secrets, packaged into an encrypted archive, and pushed to a companion public `-dist` repo.
 
-**How it works:**
+**Initial setup:**
 
-1. During `leakguard init`, you can enable public distribution. This will:
-   - Create a public `<repo-name>-dist` repo on GitHub (via `gh`)
-   - Bootstrap it with leakguard security config (gitleaks rules, file type blocking, a dist-specific pre-commit hook)
-   - Save the config to `.leakguardrc` in your private repo
-   - Create a distribution folder (default: `public-dist/`)
+Run `leakguard setup-dist` (or select the distribution option during `leakguard init`). This will:
+- Create a public `<repo-name>-dist` repo on GitHub (via `gh`)
+- Bootstrap it with leakguard security config (gitleaks rules, file type blocking, a dist-specific pre-commit hook)
+- Save the config to `.leakguardrc` in your private repo
+- Create a distribution folder (default: `public-dist/`)
 
-2. Place files you want to distribute in the distribution folder.
+```bash
+npx leakguard setup-dist
+```
 
-3. Run deploy:
+**Deploy workflow:**
+
+1. Place files you want to distribute in the distribution folder.
+
+2. Run deploy:
    ```bash
-   npx @rafa-lopes-pt/leakguard deploy
+   npx leakguard deploy
    ```
 
-4. Deploy will:
+3. Deploy will:
    - Scan the folder with gitleaks and the keyword blocklist
    - Block the deploy if secrets or sensitive keywords are found
-   - Create an encrypted `.7z` archive from the folder contents
+   - Create an encrypted archive from the folder contents
    - Push the archive to the `-dist` repo
 
-The `-dist` repo has its own pre-commit hook (`pre-commit-dist`) that only allows `.7z` archives and leakguard config files -- preventing accidental commits of unscanned content.
+**Deploy modes:**
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| Chunked (default) | `--chunked` | Encrypts and splits into text chunks (`.nofbiz` files). DLP-friendly -- avoids binary blob restrictions. |
+| 7z | `--7z` | Single encrypted `.7z` archive. Optionally creates a GitHub Release (`createRelease=true`). |
+
+Configure the default mode and other settings with `leakguard deploy --config`.
+
+The `-dist` repo has its own pre-commit hook (`pre-commit-dist`) that only allows archives and leakguard config files -- preventing accidental commits of unscanned content.
 
 ### Customizing File Type Blocking
 
@@ -551,8 +618,8 @@ Also update the version in `workflows/secret-scan.yml`.
 
 1. Add, remove, or replace keywords:
    ```bash
-   npx @rafa-lopes-pt/leakguard blacklist "new keyword"
-   npx @rafa-lopes-pt/leakguard blacklist --remove "old keyword"
+   npx leakguard blacklist "new keyword"
+   npx leakguard blacklist --remove "old keyword"
    ```
 2. Commit `security-keywords.enc`
 3. Other devs pull and get the updated encrypted list automatically
@@ -561,16 +628,17 @@ Also update the version in `workflows/secret-scan.yml`.
 ### Adding New Repos
 
 1. `cd` into the new repo
-2. Run `npx @rafa-lopes-pt/leakguard init`
+2. Run `npx leakguard init`
 3. Commit the generated files
 4. The CI workflow and pre-commit hook are ready
 
 ### Monitoring
 
 - Check GitHub Actions results after each push/PR
-- Run `npx @rafa-lopes-pt/leakguard scan-history` quarterly (or when new repos are added)
+- Run `npx leakguard scan-history` quarterly (or when new repos are added)
 - Review `.gitleaks.toml` allowlist entries periodically -- remove any that are no longer relevant
 - Verify all org members have 2FA enabled
+- Review `.git/leakguard-audit.log` for a history of scan pass/block decisions per repo
 
 ### Additional Hardening
 

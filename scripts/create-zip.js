@@ -4,36 +4,28 @@
 
 import { execSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
-const IS_WINDOWS = process.platform === "win32";
-
-function commandExists(cmd) {
-  try {
-    execSync(IS_WINDOWS ? `where ${cmd}` : `which ${cmd}`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { commandExists } from "./lib/rc.js";
+import { error, done, hint } from "./lib/ui.js";
 
 export async function createZip(targets) {
   if (!targets || targets.length === 0) {
-    console.error("Usage: leakguard zip <files...>");
-    console.error("Creates an encrypted .7z archive (AES-256) from the given files or directories.");
+    error("Usage: leakguard zip <files...>");
+    hint("Creates an encrypted .7z archive (AES-256) from the given files or directories.");
     process.exit(1);
   }
 
   if (!commandExists("7z")) {
-    console.error("ERROR: 7z is not installed.");
-    console.error("Install it: sudo apt install p7zip-full (Debian/Ubuntu) or brew install p7zip (macOS)");
+    error("7z is not installed.");
+    hint("Install it: sudo apt install p7zip-full (Debian/Ubuntu) or brew install p7zip (macOS)");
     process.exit(1);
   }
 
   for (const target of targets) {
     if (!existsSync(target)) {
-      console.error(`ERROR: "${target}" does not exist.`);
+      error(`"${target}" does not exist.`);
       process.exit(1);
     }
   }
@@ -50,17 +42,23 @@ export async function createZip(targets) {
     ? (customName.trim().endsWith(".7z") ? customName.trim() : customName.trim() + ".7z")
     : defaultName;
 
+  const outputPath = resolve(output);
+  if (!outputPath.startsWith(process.cwd())) {
+    error("Archive path must be within the current directory.");
+    process.exit(1);
+  }
+
   try {
     execSync(`7z a -p -mhe=on "${output}" ${targets.map((t) => `"${t}"`).join(" ")}`, {
       stdio: "inherit",
     });
   } catch {
-    console.error("Archive creation failed.");
+    error("Archive creation failed.");
     process.exit(1);
   }
 
-  console.log(`\nCreated: ${output}`);
-  console.log(`Remember to git add ${output}`);
+  done(`Created: ${output}`);
+  hint(`Remember to git add ${output}`);
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer = await new Promise((resolve) =>
@@ -71,7 +69,7 @@ export async function createZip(targets) {
   if (answer.trim().toLowerCase() === "y") {
     for (const target of targets) {
       rmSync(target, { recursive: true, force: true });
-      console.log(`Deleted: ${target}`);
+      done(`Deleted: ${target}`);
     }
   }
 }
