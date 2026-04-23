@@ -26,7 +26,7 @@ _leakguard_completions() {
   local cur prev commands global_flags
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init blacklist scan-history zip deploy setup-dist uninstall completion"
+  commands="init blacklist scan-history zip deploy setup-dist reassemble uninstall completion"
   global_flags="--help -h --version -v"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
@@ -44,6 +44,12 @@ _leakguard_completions() {
     deploy)
       if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "--yes -y --dry-run --chunked --7z --config" -- "$cur") )
+        return
+      fi
+      ;;
+    reassemble)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--checksum -c" -- "$cur") )
         return
       fi
       ;;
@@ -90,6 +96,7 @@ ${h("Commands:")}
   ${cmd("deploy --dry-run")}        ${dim("Run scans and create archive, but don't push")}
   ${cmd("deploy -y, --yes")}        ${dim("Skip confirmation prompt")}
   ${cmd("setup-dist")}              ${dim("Set up the public -dist repo for secure distribution")}
+  ${cmd("reassemble <out> <dir>")}  ${dim("Reassemble encrypted chunks into archive")}
   ${cmd("uninstall")}               ${dim("Remove LeakGuard artifacts from repo")}
   ${cmd("uninstall -y, --yes")}     ${dim("Remove all (keep .security-key and .gitleaks.toml)")}
   ${cmd("completion")}              ${dim("Output shell completion script")}
@@ -211,6 +218,12 @@ switch (command) {
   case "setup-dist": {
     const { setupDist } = await import("../scripts/setup-dist.js");
     await setupDist();
+    break;
+  }
+
+  case "reassemble": {
+    const { reassemble } = await import("../scripts/reassemble.js");
+    await reassemble(args.slice(1));
     break;
   }
 

@@ -1,15 +1,47 @@
 #!/usr/bin/env node
-// Reassemble chunked deploy output (.nofbiz or .txt files) back into the original ZIP.
+// Reassemble chunked deploy output (.nofbiz or .txt files) back into the original archive.
 // Reverses the process from `leakguard deploy --chunked`.
 //
-// Usage: node reassemble.js [chunk-directory]
+// Usage: node reassemble.js <output-file> <chunk-directory> [--checksum <sha256>]
+//
+// Pure Node.js -- no external dependencies.
 
 import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createDecipheriv, createHash, pbkdf2Sync } from "node:crypto";
-import { password, input } from "@inquirer/prompts";
+import { createInterface } from "node:readline";
 
-import { ok, info, warn, error, done, hint, filePath } from "./lib/ui.js";
+// -- Helpers -----------------------------------------------------------------
+
+function die(msg) {
+  console.error(`ERROR: ${msg}`);
+  process.exit(1);
+}
+
+function promptPassword(prompt) {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    // Suppress echoed characters
+    rl._writeToOutput = (s) => {
+      if (s.includes(prompt)) rl.output.write(s);
+    };
+    rl.question(prompt, (answer) => {
+      rl.close();
+      console.log(); // newline after hidden input
+      resolve(answer);
+    });
+  });
+}
+
+function prompt(question) {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
 
 function decryptString(encryptedBase64, passphrase) {
   const raw = Buffer.from(encryptedBase64, "base64");
@@ -25,128 +57,93 @@ function decryptString(encryptedBase64, passphrase) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf-8");
 }
 
-function parseChecksum(checksumPath) {
-  const content = readFileSync(checksumPath, "utf-8");
-  // Handle both formats:
-  //   SHA-256: `hash`          (non-chunked deploy)
-  //   chunkname.nofbiz: `hash` (chunked deploy -- first entry is the real hash)
-  const sha256Match = content.match(/SHA-256:\s*`([a-f0-9]{64})`/);
-  if (sha256Match) return sha256Match[1];
+// -- Main --------------------------------------------------------------------
 
-  // Chunked format: first .nofbiz entry has the real hash
-  const chunkedMatch = content.match(/\.nofbiz:\s*`([a-f0-9]{64})`/);
-  if (chunkedMatch) return chunkedMatch[1];
-
-  return null;
-}
-
-function verifyChecksum(expected, actual) {
-  if (actual === expected) {
-    ok("Checksum verified.");
-    return true;
-  }
-  warn("Checksum mismatch!");
-  error(`Expected: ${expected}`);
-  error(`Got:      ${actual}`);
-  return false;
-}
-
-async function main() {
-  const chunkDir = resolve(process.argv[2] || ".");
-
-  if (!existsSync(chunkDir)) {
-    error(`Directory not found: ${chunkDir}`);
-    process.exit(1);
+export async function reassemble(args) {
+  // Parse --checksum / -c flag
+  let expectedChecksum = null;
+  const filteredArgs = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--checksum" || args[i] === "-c") {
+      expectedChecksum = (args[++i] || "").trim().toLowerCase();
+      if (!expectedChecksum) die("--checksum requires a SHA-256 hash value");
+    } else {
+      filteredArgs.push(args[i]);
+    }
   }
 
-  // Read and sort .nofbiz files
+  if (filteredArgs.length < 2 || args.includes("--help") || args.includes("-h")) {
+    console.log("Usage: leakguard reassemble <output-file> <chunk-directory> [--checksum <sha256>]");
+    console.log();
+    console.log("  output-file       Path for the reassembled archive (e.g. output.zip)");
+    console.log("  chunk-directory    Directory containing ordered .nofbiz / .txt chunks");
+    console.log("  -c, --checksum    Optional expected SHA-256 hash to verify the output");
+    process.exit(args.includes("--help") || args.includes("-h") ? 0 : 1);
+  }
+
+  const outputPath = resolve(filteredArgs[0].endsWith(".zip") ? filteredArgs[0] : filteredArgs[0] + ".zip");
+  const chunkDir = resolve(filteredArgs[1]);
+
+  if (!existsSync(chunkDir)) die(`Directory not found: ${chunkDir}`);
+
+  // Collect and sort chunk files
   const chunkFiles = readdirSync(chunkDir)
     .filter((f) => f.endsWith(".nofbiz") || f.endsWith(".txt"))
     .sort();
 
   if (chunkFiles.length === 0) {
-    error(`No chunk files found in ${chunkDir} (expected .nofbiz or .txt)`);
-    process.exit(1);
+    die(`No chunk files found in ${chunkDir} (expected .nofbiz or .txt)`);
   }
 
-  // Validate chunk count against checksum file if available
-  const checksumCandidates = ["README.md", "checksum.md"];
-  let checksumPath = null;
-  for (const name of checksumCandidates) {
-    const candidate = join(chunkDir, name);
-    if (existsSync(candidate)) {
-      checksumPath = candidate;
-      break;
-    }
-  }
-
-  if (checksumPath) {
-    const checksumContent = readFileSync(checksumPath, "utf-8");
-    const expectedCount = (checksumContent.match(/\.nofbiz:/g) || []).length;
-    if (expectedCount > 0 && chunkFiles.length !== expectedCount) {
-      warn(`Expected ${expectedCount} chunk(s) but found ${chunkFiles.length}`);
-    }
-  }
-
-  info(`Found ${chunkFiles.length} chunk(s) in ${filePath(chunkDir)}`);
+  console.log(`Found ${chunkFiles.length} chunk(s) in ${chunkDir}`);
 
   // Concatenate chunks
   let encryptedText = "";
   for (const file of chunkFiles) {
     encryptedText += readFileSync(join(chunkDir, file), "utf-8").trim();
   }
-  info(`Combined encrypted payload: ${encryptedText.length} chars`);
+  console.log(`Combined encrypted payload: ${encryptedText.length} chars`);
 
   // Get passphrase
-  const passphrase = await password({ message: "Enter passphrase:" });
-  if (!passphrase) {
-    error("Empty passphrase.");
-    process.exit(1);
-  }
+  const passphrase = await promptPassword("Enter passphrase: ");
+  if (!passphrase) die("Empty passphrase.");
 
   // Decrypt
-  info("Decrypting (PBKDF2 key derivation, this may take a moment)...");
+  console.log("Decrypting (PBKDF2 key derivation, this may take a moment)...");
   let base64Zip;
   try {
     base64Zip = decryptString(encryptedText, passphrase);
   } catch (e) {
-    error(`Decryption failed. Wrong passphrase?\n  ${e.message}`);
-    process.exit(1);
+    die(`Decryption failed. Wrong passphrase?\n  ${e.message}`);
   }
 
-  // Decode base64 to ZIP binary
+  // Decode base64 to binary
   const zipBuffer = Buffer.from(base64Zip, "base64");
-  info(`Decrypted ZIP size: ${zipBuffer.length} bytes`);
+  console.log(`Decrypted archive size: ${zipBuffer.length} bytes`);
 
   // Verify checksum
   const actual = createHash("sha256").update(zipBuffer).digest("hex");
-  info(`SHA-256: ${actual}`);
+  console.log(`SHA-256: ${actual}`);
 
-  let verified = false;
-  if (checksumPath) {
-    const expected = parseChecksum(checksumPath);
-    if (expected) {
-      verified = verifyChecksum(expected, actual);
-    } else {
-      hint(`${checksumPath} found but could not parse SHA-256 hash.`);
-    }
+  // Use flag value, or ask interactively
+  if (!expectedChecksum) {
+    expectedChecksum = (await prompt("Paste expected SHA-256 to verify (Enter to skip): ")).toLowerCase();
   }
 
-  // If not verified via file, ask the user (skippable)
-  if (!verified) {
-    const expectedInput = await input({ message: "Paste expected SHA-256 to verify (Enter to skip):" });
-    const expected = expectedInput.trim().toLowerCase();
-    if (expected) {
-      verifyChecksum(expected, actual);
+  if (expectedChecksum) {
+    if (actual === expectedChecksum) {
+      console.log("Checksum verified OK.");
     } else {
-      hint("Checksum verification skipped.");
+      console.error(`Checksum MISMATCH!`);
+      console.error(`  Expected: ${expectedChecksum}`);
+      console.error(`  Got:      ${actual}`);
+      process.exit(1);
     }
+  } else {
+    console.log("Checksum verification skipped.");
   }
 
-  // Write output ZIP
-  const outputPath = resolve("output.zip");
+  // Write output
   writeFileSync(outputPath, zipBuffer);
-  done(`Written to ${filePath(outputPath)}`);
+  console.log(`Written to ${outputPath}`);
 }
-
-main();
