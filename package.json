@@ -1,6 +1,6 @@
 {
   "name": "leakguard",
-  "version": "0.0.0-beta.0",
+  "version": "1.0.0",
   "description": "GitHub security hardening toolkit -- pre-commit hooks and CI for secret scanning, keyword blocking, and file type enforcement",
   "type": "module",
   "bin": {
@@ -12,7 +12,6 @@
     ".gitleaks.toml",
     ".security-filetypes.default",
     "workflows/",
-    "security-keywords.txt.example",
     "LICENSE",
     "README.md"
   ],
@@ -20,9 +19,11 @@
     "node": ">=18.0.0"
   },
   "leakguard": {
-    "gitleaksVersion": "8.21.2"
+    "gitleaksVersion": "8.21.2",
+    "versionDate": "2026-04-23"
   },
   "scripts": {
+    "prepare": "husky",
     "setup": "node scripts/setup.js",
     "encrypt-keywords": "node scripts/encrypt-keywords.js",
     "scan-history": "node scripts/scan-history.js",
@@ -45,11 +46,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rafa-lopes-pt/leak-guard.git"
+    "url": "git+https://github.com/rafa-lopes-pt/leakguard.git"
   },
-  "homepage": "https://github.com/rafa-lopes-pt/leak-guard#readme",
+  "homepage": "https://github.com/rafa-lopes-pt/leakguard#readme",
   "bugs": {
-    "url": "https://github.com/rafa-lopes-pt/leak-guard/issues"
+    "url": "https://github.com/rafa-lopes-pt/leakguard/issues"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0"
@@ -57,6 +58,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.2.1",
-    "globals": "^17.5.0"
+    "globals": "^17.5.0",
+    "husky": "^9.1.7"
   }
 }

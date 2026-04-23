@@ -38,7 +38,7 @@ eslint.config.js                # ESLint flat config
 - `leakguard scan-history [repo...]` -- One-time history audit
 - `leakguard zip <files...>` -- Create encrypted .7z archive
 - `leakguard deploy [path]` -- Scan, archive, push to -dist repo
-- `leakguard deploy --chunked` -- Deploy as encrypted text chunks (DLP-friendly)
+- `leakguard deploy --chunked` -- Deploy as encrypted text chunks (stronger encryption)
 - `leakguard deploy --7z` -- Deploy as single encrypted .7z archive
 - `leakguard deploy --config` -- Interactive deploy configuration
 - `leakguard deploy --config key=value` -- Set deploy config directly

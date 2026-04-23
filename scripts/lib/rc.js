@@ -34,6 +34,21 @@ export function isGitRepo() {
   }
 }
 
+export function getRemoteUrl() {
+  try {
+    const origin = run("git remote get-url origin");
+    if (origin.startsWith("git@")) {
+      const host = origin.split(":")[0].replace(/^git@/, "");
+      const path = origin.split(":")[1].replace(/\.git$/, "");
+      return `https://${host}/${path}`;
+    }
+    const url = new URL(origin);
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\.git$/, "")}`;
+  } catch {
+    return null;
+  }
+}
+
 export function ensureGitignoreEntry(entry) {
   const gitignorePath = join(REPO_ROOT, ".gitignore");
   let content = "";
@@ -45,6 +60,18 @@ export function ensureGitignoreEntry(entry) {
     const separator = content.endsWith("\n") || content === "" ? "" : "\n";
     writeFileSync(gitignorePath, content + separator + entry + "\n");
   }
+}
+
+export function removeGitignoreEntries(entries) {
+  const gitignorePath = join(REPO_ROOT, ".gitignore");
+  if (!existsSync(gitignorePath)) return false;
+  const content = readFileSync(gitignorePath, "utf-8");
+  const entrySet = new Set(entries.map((e) => e.trim()));
+  const filtered = content.split("\n").filter((line) => !entrySet.has(line.trim()));
+  const newContent = filtered.join("\n");
+  if (newContent === content) return false;
+  writeFileSync(gitignorePath, newContent);
+  return true;
 }
 
 export function readRc() {

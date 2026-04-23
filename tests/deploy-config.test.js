@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 describe("deploy-config", () => {
   let tmpDir, origCwd;
-  let resolveDeployConfig, DEPLOY_DEFAULTS, writeDeployConfig;
+  let resolveDeployConfig, DEPLOY_DEFAULTS, writeDeployConfig, parseChunkSize;
   let writeRc;
 
   before(async () => {
@@ -21,6 +21,7 @@ describe("deploy-config", () => {
     resolveDeployConfig = mod.resolveDeployConfig;
     DEPLOY_DEFAULTS = mod.DEPLOY_DEFAULTS;
     writeDeployConfig = mod.writeDeployConfig;
+    parseChunkSize = mod.parseChunkSize;
   });
 
   after(() => {
@@ -64,5 +65,48 @@ describe("deploy-config", () => {
     writeDeployConfig({ skipGitleaks: true });
     const config = resolveDeployConfig();
     assert.equal(config.skipGitleaks, true);
+  });
+
+  describe("parseChunkSize", () => {
+    it("raw number passthrough", () => {
+      assert.equal(parseChunkSize(500000, 1000), 500000);
+    });
+
+    it("string kb", () => {
+      assert.equal(parseChunkSize("500kb", 1000), 500000);
+    });
+
+    it("string mb with decimal", () => {
+      assert.equal(parseChunkSize("0.5mb", 1000), 500000);
+    });
+
+    it("string mb with leading dot", () => {
+      assert.equal(parseChunkSize(".5mb", 1000), 500000);
+    });
+
+    it("string gb", () => {
+      assert.equal(parseChunkSize("1gb", 1000), 1000000000);
+    });
+
+    it("count mode even split", () => {
+      assert.equal(parseChunkSize("3n", 900), 300);
+    });
+
+    it("count mode with ceil", () => {
+      assert.equal(parseChunkSize("3n", 1000), 334);
+    });
+
+    it("plain number as string", () => {
+      assert.equal(parseChunkSize("500000", 1000), 500000);
+    });
+
+    it("invalid string returns null", () => {
+      assert.equal(parseChunkSize("abc", 1000), null);
+    });
+
+    it("case insensitive", () => {
+      assert.equal(parseChunkSize("500KB", 1000), 500000);
+      assert.equal(parseChunkSize("0.5MB", 1000), 500000);
+    });
   });
 });

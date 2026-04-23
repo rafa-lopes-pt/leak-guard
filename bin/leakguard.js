@@ -2,7 +2,7 @@
 // CLI entry point for LeakGuard.
 // Dispatches subcommands via process.argv -- no extra deps.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,7 +26,7 @@ _leakguard_completions() {
   local cur prev commands global_flags
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init blacklist scan-history zip deploy setup-dist completion"
+  commands="init blacklist scan-history zip deploy setup-dist uninstall completion"
   global_flags="--help -h --version -v"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
@@ -47,6 +47,12 @@ _leakguard_completions() {
         return
       fi
       ;;
+    uninstall)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--yes -y" -- "$cur") )
+        return
+      fi
+      ;;
   esac
 }
 
@@ -54,8 +60,10 @@ complete -o default -F _leakguard_completions leakguard
 `.trim();
 
 function printVersion() {
-  const pkg = JSON.parse(readFileSync(resolve(PKG_ROOT, "package.json"), "utf-8"));
-  console.log(pkg.version);
+  const pkgPath = resolve(PKG_ROOT, "package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+  const date = statSync(pkgPath).mtime.toISOString().slice(0, 10);
+  console.log(`${pkg.version} (${date})`);
 }
 
 function printHelp() {
@@ -74,14 +82,16 @@ ${h("Commands:")}
   ${cmd("blacklist <keywords>")}    ${dim("Add keywords to the encrypted blocklist")}
   ${cmd("scan-history [dir]")}      ${dim("One-time full-history audit")}
   ${cmd("zip <files...>")}          ${dim("Create encrypted .7z archive")}
-  ${cmd("deploy [path]")}           ${dim("Scan, zip, push to -dist repo")}
-  ${cmd("deploy --chunked")}        ${dim("Deploy as encrypted text chunks (DLP-friendly)")}
+  ${cmd("deploy [path]")}           ${dim("Scan, encrypt, push to public -dist repo (layer 3)")}
+  ${cmd("deploy --chunked")}        ${dim("Deploy as encrypted text chunks (stronger encryption)")}
   ${cmd("deploy --7z")}             ${dim("Deploy as single encrypted .7z archive")}
   ${cmd("deploy --config")}         ${dim("Interactive deploy configuration")}
   ${cmd("deploy --config k=v")}     ${dim("Set deploy config values directly")}
   ${cmd("deploy --dry-run")}        ${dim("Run scans and create archive, but don't push")}
   ${cmd("deploy -y, --yes")}        ${dim("Skip confirmation prompt")}
-  ${cmd("setup-dist")}              ${dim("Set up the public -dist distribution repo")}
+  ${cmd("setup-dist")}              ${dim("Set up the public -dist repo for secure distribution")}
+  ${cmd("uninstall")}               ${dim("Remove LeakGuard artifacts from repo")}
+  ${cmd("uninstall -y, --yes")}     ${dim("Remove all (keep .security-key and .gitleaks.toml)")}
   ${cmd("completion")}              ${dim("Output shell completion script")}
 
 ${h("Blacklist options:")}
@@ -92,7 +102,7 @@ ${h("Blacklist options:")}
 
 ${h("Deploy config keys:")}
   ${dim("defaultMode=chunked|7z    Default deploy mode")}
-  ${dim("chunkSize=500000          Chunk size in bytes (min 10000)")}
+  ${dim("chunkSize=500kb           Chunk size (bytes, kb, mb, gb, or Nn for N parts)")}
   ${dim("archiveName={folder}      Archive name template ({folder} = dist folder)")}
   ${dim("skipGitleaks=true|false   Skip gitleaks scan")}
   ${dim("skipKeywords=true|false   Skip keyword scan")}
@@ -132,7 +142,7 @@ ${h("Examples:")}
 }
 
 const args = process.argv.slice(2);
-const command = args[0] || "init";
+const command = args[0] || "--help";
 
 switch (command) {
   case "--help":
@@ -201,6 +211,12 @@ switch (command) {
   case "setup-dist": {
     const { setupDist } = await import("../scripts/setup-dist.js");
     await setupDist();
+    break;
+  }
+
+  case "uninstall": {
+    const { main } = await import("../scripts/uninstall.js");
+    await main(args.slice(1));
     break;
   }
 

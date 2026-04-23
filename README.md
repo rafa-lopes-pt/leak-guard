@@ -4,9 +4,13 @@
 
 # LeakGuard -- GitHub Security Hardening Toolkit
 
-**LeakGuard** is a comprehensive security scanning toolkit for GitHub organizations on the **free plan**. Prevents credential leaks and enforces security policies using client-side pre-commit hooks and GitHub Actions as a server-side safety net.
+**LeakGuard** hardens GitHub organizations on the **free plan** by scanning for leaks at three boundaries where secrets escape:
 
-It is designed to provide a **practical layer of protection** where none exists by default -- catching accidental leaks before they happen. This is also why it encourages a **private source repo + encrypted public `-dist` repo** workflow: sensitive work stays in a private repo, and only curated, scanned, and encrypted content is published to the public one.
+1. **Layer 1 -- Commit time:** Pre-commit hooks catch secrets, sensitive keywords, and dangerous file types before they enter the repo.
+2. **Layer 2 -- CI time:** GitHub Actions re-run the same scans on push/PR as a server-side safety net.
+3. **Layer 3 -- Distribution time:** When files move from a private repo to a public `-dist` repo, deploy scans the content, then encrypts it before pushing. Encryption serves a dual purpose: it keeps content confidential *and* acts as a final safety net -- even if a scan misses something, the published output is ciphertext.
+
+The riskiest boundary is distribution. Commits and CI operate within a private repo; distribution crosses from private to public. That is why Layer 3 exists.
 
 > **No security tool is bulletproof -- LeakGuard is no exception.**
 > Every git hook can be bypassed with `--no-verify`, and free-tier GitHub cannot enforce status checks on private repos. Think of LeakGuard as a seatbelt, not an armored vault.
@@ -17,6 +21,7 @@ It is designed to provide a **practical layer of protection** where none exists 
 
 - [LeakGuard -- GitHub Security Hardening Toolkit](#leakguard----github-security-hardening-toolkit)
   - [Table of Contents](#table-of-contents)
+  - [Quick Start](#quick-start)
   - [1. GitHub Organization Security Overview](#1-github-organization-security-overview)
     - [Why Org-Level Security Matters](#why-org-level-security-matters)
     - [Shared Responsibility Model](#shared-responsibility-model)
@@ -42,7 +47,7 @@ It is designed to provide a **practical layer of protection** where none exists 
     - [Adding or Updating Keywords](#adding-or-updating-keywords)
     - [One-Time History Audit](#one-time-history-audit)
     - [Creating Encrypted Archives](#creating-encrypted-archives)
-    - [Public Distribution (Private Repo to Public -dist Repo)](#public-distribution-private-repo-to-public--dist-repo)
+    - [Layer 3: Secure Distribution (Private Repo to Public -dist Repo)](#layer-3-secure-distribution-private-repo-to-public--dist-repo)
     - [Customizing File Type Blocking](#customizing-file-type-blocking)
   - [6. Handling Cases](#6-handling-cases)
     - [A File Type Is Blocked](#a-file-type-is-blocked)
@@ -62,6 +67,25 @@ It is designed to provide a **practical layer of protection** where none exists 
     - [Monitoring](#monitoring)
     - [Additional Hardening](#additional-hardening)
   - [Limitations (Free Plan)](#limitations-free-plan)
+
+---
+
+## Quick Start
+
+```bash
+npm install -g leakguard    # or use npx leakguard for one-off runs
+cd /path/to/your-repo
+leakguard init
+```
+
+The interactive wizard will:
+- Install [gitleaks](https://github.com/gitleaks/gitleaks) (if not already present)
+- Set up the encryption key for keyword scanning
+- Configure file type blocking for the repo
+- Install the pre-commit hook (Layer 1)
+- Copy the GitHub Actions workflow (Layer 2)
+
+After setup, every `git commit` is automatically scanned for secrets, sensitive keywords, and dangerous file types. See [Setup Guide](#5-setup-guide) for detailed options, and [Layer 3](#layer-3-secure-distribution-private-repo-to-public--dist-repo) if you publish to a public repo.
 
 ---
 
@@ -150,29 +174,33 @@ When the team grows, **GitHub Team** ($4/user/month) is the recommended upgrade:
 
 ## 4. How This Project Works
 
+LeakGuard scans for three categories of leaks across three boundaries.
+
 ### Architecture
 
 ```
-Developer workstation              GitHub
-========================          ========================
+Layer 1: Commit            Layer 2: CI               Layer 3: Distribution
+======================     ======================     ======================
 
- git commit                       push / PR
-     |                                |
- pre-commit hook                  GitHub Actions workflow
-     |                                |
- +---+---+---+                   +---+---+---+
- |   |   |   |                   |   |   |   |
- v   v   v   |                   v   v   v   |
- FT  KW  GL  |                   FT  KW  GL  |
- |   |   |   |                   |   |   |   |
- +---+---+---+                   +---+---+---+
-     |                                |
- pass/fail                        pass/fail
+ git commit                 push / PR                  leakguard deploy
+     |                          |                          |
+ pre-commit hook            GitHub Actions             deploy scans
+     |                          |                          |
+ +---+---+---+             +---+---+---+              +---+---+
+ |   |   |   |             |   |   |   |              |   |   |
+ v   v   v   |             v   v   v   |              v   v   |
+ FT  KW  GL  |             FT  KW  GL  |              KW  GL  |
+ |   |   |   |             |   |   |   |              |   |   |
+ +---+---+---+             +---+---+---+              +---+---+
+     |                          |                          |
+ pass/fail                  pass/fail                 encrypt + push
 ```
 
 **FT** = File type check (extension + MIME)
 **KW** = Keyword scan (encrypted blocklist)
 **GL** = Gitleaks (secret/credential patterns)
+
+Layers 1 and 2 run identical scans (FT + KW + GL) inside the private repo. Layer 3 runs KW + GL on the distribution folder (no file type check -- the content is about to be encrypted anyway), then encrypts and pushes to the public `-dist` repo.
 
 ### Tool Choice: gitleaks
 
@@ -254,8 +282,8 @@ If installed globally, replace `npx leakguard` with just `leakguard` in all exam
 | `leakguard blacklist -r kw1 kw2` | Remove specific keywords |
 | `leakguard scan-history [dir...]` | One-time full-history audit |
 | `leakguard zip <files...>` | Create encrypted .7z archive |
-| `leakguard deploy [path]` | Scan, archive, and push to the public `-dist` repo |
-| `leakguard deploy --chunked` | Deploy as encrypted text chunks (DLP-friendly) |
+| `leakguard deploy [path]` | Layer 3: scan, encrypt, and push to the public `-dist` repo |
+| `leakguard deploy --chunked` | Deploy as encrypted text chunks (stronger encryption) |
 | `leakguard deploy --7z` | Deploy as a single encrypted .7z archive |
 | `leakguard deploy --config` | Interactive deploy configuration |
 | `leakguard deploy --config k=v` | Set deploy config values directly |
@@ -309,7 +337,7 @@ npx leakguard zip assets/ config.dat
 # Deploy curated content to the public -dist repo
 npx leakguard deploy
 
-# Deploy in chunked mode (encrypted text chunks, DLP-friendly)
+# Deploy in chunked mode (encrypted text chunks, stronger encryption)
 npx leakguard deploy --chunked
 
 # Dry-run deploy (scans and archives but doesn't push)
@@ -413,9 +441,9 @@ npx leakguard zip assets/ config.dat
 
 You will be prompted for a password. The archive is created in the current directory.
 
-### Public Distribution (Private Repo to Public `-dist` Repo)
+### Layer 3: Secure Distribution (Private Repo to Public `-dist` Repo)
 
-Organizations often need to share curated content from a private repo publicly without exposing the full repo. LeakGuard supports this through a **distribution workflow**: a designated folder in your private repo is scanned for secrets, packaged into an encrypted archive, and pushed to a companion public `-dist` repo.
+Distribution is the riskiest boundary: files cross from a private repo to a public one. A single missed secret becomes permanently public. LeakGuard's deploy command addresses this by scanning the distribution folder with gitleaks and the keyword blocklist, then encrypting the content before pushing it to a companion public `-dist` repo. Encryption keeps the content confidential and doubles as a safety net -- even if a scan misses something, what reaches the public repo is ciphertext, not cleartext source.
 
 **Initial setup:**
 
@@ -448,7 +476,7 @@ npx leakguard setup-dist
 
 | Mode | Flag | Description |
 |------|------|-------------|
-| Chunked (default) | `--chunked` | Encrypts and splits into text chunks (`.nofbiz` files). DLP-friendly -- avoids binary blob restrictions. |
+| Chunked (default) | `--chunked` | Encrypts and splits into text chunks (`.nofbiz` files). Content is split across multiple independently encrypted files for defense in depth. |
 | 7z | `--7z` | Single encrypted `.7z` archive. Optionally creates a GitHub Release (`createRelease=true`). |
 
 Configure the default mode and other settings with `leakguard deploy --config`.

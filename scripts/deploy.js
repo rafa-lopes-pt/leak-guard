@@ -10,7 +10,7 @@ import { createCipheriv, createHash, randomBytes, pbkdf2Sync } from "node:crypto
 import { confirm, password } from "@inquirer/prompts";
 
 import { REPO_ROOT, ENC_FILE, KEY_FILE, commandExists, run, isGitRepo, readRc } from "./lib/rc.js";
-import { resolveDeployConfig, promptDeployConfig, applyKeyValueConfig } from "./lib/deploy-config.js";
+import { resolveDeployConfig, promptDeployConfig, applyKeyValueConfig, parseChunkSize } from "./lib/deploy-config.js";
 import { decryptKeywords } from "./lib/crypto.js";
 import { header, ok, info, warn, error, done, skip, label, hint, filePath, gap } from "./lib/ui.js";
 
@@ -429,7 +429,7 @@ export async function deploy(args) {
     info("Encrypting...");
     const encryptedText = encryptString(base64String, passphrase);
 
-    const chunkSize = deployConfig.chunkSize;
+    const chunkSize = parseChunkSize(deployConfig.chunkSize, encryptedText.length);
     const chunkCount = Math.ceil(encryptedText.length / chunkSize);
     const names = generateSortableNames(chunkCount);
 

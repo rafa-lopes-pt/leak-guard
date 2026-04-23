@@ -5,6 +5,45 @@ import { select, input, confirm } from "@inquirer/prompts";
 import { readRc, writeRc } from "./rc.js";
 import { done, error, label } from "./ui.js";
 
+// ---------------------------------------------------------------------------
+// Chunk size parsing and validation
+// ---------------------------------------------------------------------------
+
+const UNIT_MULTIPLIERS = { kb: 1_000, mb: 1_000_000, gb: 1_000_000_000 };
+
+/** Resolve a chunkSize value to bytes. Returns null for invalid input. */
+export function parseChunkSize(value, totalSize) {
+  if (typeof value === "number") return value;
+  const str = String(value).toLowerCase().trim();
+  // Count mode: "3n" -> split into N equal parts
+  const countMatch = str.match(/^(\d+)n$/);
+  if (countMatch) {
+    const parts = Number(countMatch[1]);
+    return Math.ceil(totalSize / parts);
+  }
+  // Unit mode: "0.5mb", ".5mb", "500kb", "1gb"
+  const unitMatch = str.match(/^(\.\d+|\d+\.?\d*)(kb|mb|gb)$/);
+  if (unitMatch) {
+    return Math.round(Number(unitMatch[1]) * UNIT_MULTIPLIERS[unitMatch[2]]);
+  }
+  // Plain number as string
+  const n = Number(str);
+  if (!Number.isNaN(n) && str !== "") return n;
+  return null;
+}
+
+function validateChunkSize(value) {
+  const str = String(value).toLowerCase().trim();
+  const countMatch = str.match(/^(\d+)n$/);
+  if (countMatch) {
+    return Number(countMatch[1]) >= 2 ? true : "Count mode requires at least 2 parts";
+  }
+  const resolved = parseChunkSize(str, Infinity);
+  if (resolved === null) return "Invalid format. Use a number, or add kb/mb/gb suffix, or Nn for count";
+  if (resolved < 10000) return "Must be >= 10000 bytes (10kb)";
+  return true;
+}
+
 export const DEPLOY_DEFAULTS = {
   defaultMode: "chunked",
   chunkSize: 500000,
@@ -18,7 +57,7 @@ export const DEPLOY_DEFAULTS = {
 
 const DEPLOY_SCHEMA = {
   defaultMode: { type: "enum", values: ["chunked", "7z"] },
-  chunkSize: { type: "number", min: 10000 },
+  chunkSize: { type: "chunk-size" },
   archiveName: { type: "string" },
   skipGitleaks: { type: "boolean" },
   skipKeywords: { type: "boolean" },
@@ -45,7 +84,7 @@ export async function promptDeployConfig() {
   const defaultMode = await select({
     message: "Default deploy mode:",
     choices: [
-      { name: "chunked -- encrypted text chunks (DLP-friendly)", value: "chunked" },
+      { name: "chunked -- encrypted text chunks (stronger encryption)", value: "chunked" },
       { name: "7z -- single encrypted .7z archive", value: "7z" },
     ],
     default: current.defaultMode,
@@ -54,15 +93,13 @@ export async function promptDeployConfig() {
   let chunkSize = current.chunkSize;
   if (defaultMode === "chunked") {
     const sizeStr = await input({
-      message: "Chunk size (bytes, min 10000):",
+      message: "Chunk size (e.g. 500000, 500kb, 0.5mb, 3n):",
       default: String(current.chunkSize),
-      validate: (v) => {
-        const n = Number(v);
-        if (!Number.isInteger(n) || n < 10000) return "Must be an integer >= 10000";
-        return true;
-      },
+      validate: validateChunkSize,
     });
-    chunkSize = Number(sizeStr);
+    // Store as number if purely numeric integer, otherwise raw string
+    const n = Number(sizeStr);
+    chunkSize = Number.isInteger(n) ? n : sizeStr.trim();
   }
 
   const archiveName = await input({
@@ -171,6 +208,17 @@ export function applyKeyValueConfig(pairs) {
       case "string":
         updates[key] = rawValue;
         break;
+
+      case "chunk-size": {
+        const valid = validateChunkSize(rawValue);
+        if (valid !== true) {
+          error(`"${key}": ${valid}`);
+          process.exit(1);
+        }
+        const num = Number(rawValue);
+        updates[key] = Number.isInteger(num) ? num : rawValue.trim();
+        break;
+      }
 
       case "string-or-false":
         updates[key] = rawValue === "false" ? false : rawValue;

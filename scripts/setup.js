@@ -10,10 +10,10 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 
-import { REPO_ROOT, commandExists, run, isGitRepo, ensureGitignoreEntry } from "./lib/rc.js";
+import { REPO_ROOT, commandExists, run, isGitRepo, getRemoteUrl, ensureGitignoreEntry } from "./lib/rc.js";
 import { promptDeployConfig } from "./lib/deploy-config.js";
 import { getInstallCommand } from "./lib/installer.js";
-import { banner, header, ok, info, warn, error, done, skip, hint, cmd, filePath, gap, list, numberedList } from "./lib/ui.js";
+import { banner, header, ok, info, warn, error, done, skip, hint, cmd, filePath, label, gap, list, numberedList } from "./lib/ui.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -83,7 +83,10 @@ const DEFAULT_ALLOWED_TYPES = ["application/x-7z-compressed"];
 async function stepWelcome() {
   banner("LeakGuard Setup");
 
-  info(`Repository: ${filePath(REPO_ROOT)}`);
+  const remoteUrl = getRemoteUrl();
+  label("Repository", filePath(remoteUrl || REPO_ROOT));
+  label("Author", PKG.author || "unknown");
+  label("Version", `${PKG.version} (${PKG.leakguard?.versionDate || "pre-release"})`);
   gap();
   numberedList([
     "Check/install gitleaks (secret scanner)",
@@ -91,6 +94,7 @@ async function stepWelcome() {
     "Configure a keyword blocklist (encrypted)",
     "Configure blocked file types (extensions + MIME types)",
     "Check/install 7z (for encrypted archives)",
+    "Configure deploy defaults (distribution repo settings)",
     "Install pre-commit hook, CI workflow, and gitleaks config",
   ]);
   gap();
@@ -434,6 +438,15 @@ async function stepExecute() {
 
   gap();
   warn(`Do NOT commit ${filePath(".security-key")} (it is gitignored).`);
+
+  gap();
+  info("Next steps:");
+  list([
+    `Add keywords to the blocklist: ${cmd("leakguard blacklist <keywords>")}`,
+    `Audit existing commit history:  ${cmd("leakguard scan-history")}`,
+    `Set up a distribution repo:     ${cmd("leakguard setup-dist")}`,
+    `Enable shell completions:       ${cmd('eval "$(leakguard completion)"')}`,
+  ]);
 }
 
 // ---------------------------------------------------------------------------
