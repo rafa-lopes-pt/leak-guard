@@ -461,6 +461,7 @@ export async function deploy(args) {
     const pushed = pushToDist(cloneUrl, distRepo, chunkFiles, commitMsg);
     if (pushed) {
       done(`Deployed ${chunkCount} encrypted chunk(s) to ${distRepo}.`);
+      hint("Browser-based decryption: https://github.com/rafa-lopes-pt/leakguard/blob/main/reassemble.html");
     }
   } else {
     // -- .7z mode --

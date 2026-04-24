@@ -47,7 +47,8 @@ The riskiest boundary is distribution. Commits and CI operate within a private r
     - [Adding or Updating Keywords](#adding-or-updating-keywords)
     - [One-Time History Audit](#one-time-history-audit)
     - [Creating Encrypted Archives](#creating-encrypted-archives)
-    - [Layer 3: Secure Distribution (Private Repo to Public -dist Repo)](#layer-3-secure-distribution-private-repo-to-public--dist-repo)
+    - [Layer 3: Secure Distribution (Private Repo to Public `-dist` Repo)](#layer-3-secure-distribution-private-repo-to-public--dist-repo)
+    - [Receiving Deployed Content](#receiving-deployed-content)
     - [Customizing File Type Blocking](#customizing-file-type-blocking)
   - [6. Handling Cases](#6-handling-cases)
     - [A File Type Is Blocked](#a-file-type-is-blocked)
@@ -217,8 +218,8 @@ Some repos contain sensitive business terms (client names, project codenames, in
 
 1. Keywords are added via `leakguard blacklist` and encrypted with `openssl enc -aes-256-cbc -pbkdf2` using a shared passphrase
 2. Only `security-keywords.enc` is committed to the repo -- no plaintext ever touches disk
-4. The pre-commit hook decrypts it at scan time and greps staged changes
-5. GitHub Actions decrypts it using the `LEAKGUARD_SECURITY_KEY` repo secret
+3. The pre-commit hook decrypts it at scan time and greps staged changes
+4. GitHub Actions decrypts it using the `LEAKGUARD_SECURITY_KEY` repo secret
 
 ### File Type Blocking
 
@@ -290,6 +291,8 @@ If installed globally, replace `npx leakguard` with just `leakguard` in all exam
 | `leakguard deploy --dry-run` | Run scans and create archive, but don't push |
 | `leakguard deploy -y` / `--yes` | Skip confirmation prompt |
 | `leakguard setup-dist` | Set up the public `-dist` distribution repo |
+| `leakguard reassemble <out> <dir>` | Reassemble encrypted chunks into archive |
+| `leakguard uninstall` | Remove LeakGuard artifacts from repo |
 | `leakguard completion` | Output shell completion script (bash/zsh) |
 | `leakguard --help` | Show help |
 | `leakguard --version` | Print version |
@@ -299,7 +302,7 @@ If installed globally, replace `npx leakguard` with just `leakguard` in all exam
 | Key | Values | Description |
 |-----|--------|-------------|
 | `defaultMode` | `chunked` / `7z` | Default deploy mode |
-| `chunkSize` | integer (min 10000) | Chunk size in bytes |
+| `chunkSize` | `500kb`, `1mb`, `3n`, etc. | Chunk size (bytes, kb, mb, gb, or Nn for N equal parts) |
 | `archiveName` | string | Archive name template (`{folder}` = dist folder) |
 | `skipGitleaks` | `true` / `false` | Skip gitleaks scan during deploy |
 | `skipKeywords` | `true` / `false` | Skip keyword scan during deploy |
@@ -476,12 +479,26 @@ npx leakguard setup-dist
 
 | Mode | Flag | Description |
 |------|------|-------------|
-| Chunked (default) | `--chunked` | Encrypts and splits into text chunks (`.nofbiz` files). Content is split across multiple independently encrypted files for defense in depth. |
+| Chunked (default) | `--chunked` | Creates a plain ZIP, encrypts the whole payload (PBKDF2 + AES-256-CBC), then splits the ciphertext into text chunks (`.nofbiz` files). |
 | 7z | `--7z` | Single encrypted `.7z` archive. Optionally creates a GitHub Release (`createRelease=true`). |
 
 Configure the default mode and other settings with `leakguard deploy --config`.
 
 The `-dist` repo has its own pre-commit hook (`pre-commit-dist`) that only allows archives and leakguard config files -- preventing accidental commits of unscanned content.
+
+### Receiving Deployed Content
+
+Recipients can decrypt chunked deploys in two ways:
+
+*CLI (requires Node.js):*
+```bash
+npx leakguard reassemble output.zip ./chunks --checksum <sha256>
+```
+
+*Browser (no installs required):*
+Open [`reassemble.html`](reassemble.html) in any modern browser (Chrome 80+, Edge 80+, Firefox 105+, Safari 16.4+). Paste the chunk contents, enter the passphrase, and view or download the decrypted files directly. Everything runs locally -- no server, no file system access, no network requests. This is designed for locked-down corporate machines where CLI tools are unavailable.
+
+Both methods use the same cryptographic parameters: PBKDF2 (100,000 iterations, SHA-256) for key derivation and AES-256-CBC for decryption. The deploy output includes a SHA-256 checksum for verification.
 
 ### Customizing File Type Blocking
 

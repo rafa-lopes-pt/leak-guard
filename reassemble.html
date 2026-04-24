@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LeakGuard Reassemble</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;max-width:920px;margin:0 auto;padding:20px;color:#1e293b;background:#fafafa}
+h1{font-size:1.4em;margin-bottom:2px}
+.subtitle{color:#64748b;font-size:.85em;margin-bottom:18px}
+h2{font-size:1.1em;margin:20px 0 8px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
+label{display:block;font-weight:600;font-size:.82em;margin-bottom:3px;color:#475569}
+textarea{width:100%;font-family:"Cascadia Code","Fira Code",Consolas,monospace;font-size:12px;padding:8px;border:1px solid #cbd5e1;border-radius:4px;resize:vertical;background:#fff}
+input[type=password],input[type=text]{width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:13px;background:#fff}
+.row{margin-top:10px}
+.row-inline{display:flex;gap:12px;margin-top:10px}
+.row-inline>div{flex:1}
+.actions{margin-top:14px;display:flex;gap:8px;align-items:center}
+button{padding:7px 20px;background:#2563eb;color:#fff;border:none;border-radius:4px;font-size:13px;cursor:pointer;font-weight:600}
+button:hover{background:#1d4ed8}
+button:disabled{background:#94a3b8;cursor:not-allowed}
+.btn-secondary{background:#475569}
+.btn-secondary:hover{background:#334155}
+#log{margin-top:14px;padding:10px 12px;background:#0f172a;color:#cbd5e1;border-radius:4px;font-family:"Cascadia Code","Fira Code",Consolas,monospace;font-size:12px;line-height:1.7;white-space:pre-wrap;display:none;max-height:280px;overflow-y:auto}
+#log .err{color:#f87171}
+#log .ok{color:#4ade80}
+.file-entry{display:flex;align-items:center;padding:5px 8px;border-bottom:1px solid #f1f5f9;font-size:.88em;cursor:pointer;border-radius:3px}
+.file-entry:hover{background:#f1f5f9}
+.file-entry.active{background:#e0e7ff}
+.fname{flex:1;font-family:Consolas,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fsize{color:#94a3b8;font-size:.8em;margin:0 10px;white-space:nowrap}
+.fbtn{padding:2px 8px;background:#e2e8f0;border:none;border-radius:3px;font-size:.78em;cursor:pointer;color:#334155;margin-left:3px}
+.fbtn:hover{background:#cbd5e1}
+#viewer{margin-top:12px}
+#viewer-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+#viewer-name{font-family:Consolas,monospace;font-size:.9em;font-weight:600}
+#viewer-content{padding:12px;background:#fff;border:1px solid #e2e8f0;border-radius:4px;font-family:"Cascadia Code","Fira Code",Consolas,monospace;font-size:12px;line-height:1.55;overflow:auto;max-height:500px;white-space:pre-wrap;word-wrap:break-word;tab-size:4}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<h1>LeakGuard Reassemble</h1>
+<p class="subtitle">Decrypt chunked deploy output entirely in the browser. No server, no installs, no file access.</p>
+
+<div id="input-section">
+  <div class="row">
+    <label for="payload">Encrypted content (paste all chunks concatenated)</label>
+    <textarea id="payload" rows="7" placeholder="Open each .nofbiz / .txt chunk in Notepad, copy contents, paste here. Order does not matter as long as you paste them all into one continuous string." spellcheck="false"></textarea>
+  </div>
+
+  <div class="row-inline">
+    <div>
+      <label for="passphrase">Passphrase</label>
+      <input type="password" id="passphrase" autocomplete="off">
+    </div>
+    <div>
+      <label for="checksum">Expected SHA-256 (optional)</label>
+      <input type="text" id="checksum" placeholder="from deploy output or README" autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="decrypt-btn" onclick="doDecrypt()">Decrypt</button>
+    <button id="zip-btn" class="btn-secondary hidden" onclick="downloadZip()">Download ZIP</button>
+  </div>
+</div>
+
+<pre id="log"></pre>
+
+<div id="files-section" class="hidden">
+  <h2 id="files-heading">Files</h2>
+  <div id="file-list"></div>
+</div>
+
+<div id="viewer" class="hidden">
+  <div id="viewer-bar">
+    <span id="viewer-name"></span>
+    <button class="fbtn" onclick="downloadCurrent()">Download file</button>
+  </div>
+  <pre id="viewer-content"></pre>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ */
+/*  Utilities                                                         */
+/* ------------------------------------------------------------------ */
+
+function b64ToBytes(b64) {
+  var bin = atob(b64);
+  var out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function fmtSize(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+var logEl = document.getElementById("log");
+
+function log(msg, cls) {
+  logEl.style.display = "block";
+  if (cls) {
+    var span = document.createElement("span");
+    span.className = cls;
+    span.textContent = msg + "\n";
+    logEl.appendChild(span);
+  } else {
+    logEl.appendChild(document.createTextNode(msg + "\n"));
+  }
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearLog() {
+  logEl.textContent = "";
+  logEl.style.display = "none";
+}
+
+/* ------------------------------------------------------------------ */
+/*  Crypto helpers (Web Crypto API)                                   */
+/* ------------------------------------------------------------------ */
+
+async function sha256Hex(data) {
+  var hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map(function (b) { return b.toString(16).padStart(2, "0"); })
+    .join("");
+}
+
+// Matches deploy.js encryptString / reassemble.js decryptString:
+//   format:  base64( salt[16] | iv[16] | ciphertext )
+//   KDF:     PBKDF2  100 000 iterations  SHA-256  32-byte key
+//   cipher:  AES-256-CBC
+async function decryptPayload(encB64, passphrase) {
+  var raw = b64ToBytes(encB64);
+  if (raw.length < 33) throw new Error("Encrypted data too short (need salt + iv + data)");
+
+  var salt       = raw.slice(0, 16);
+  var iv         = raw.slice(16, 32);
+  var ciphertext = raw.slice(32);
+
+  var keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(passphrase),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+
+  var key = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+    keyMaterial,
+    { name: "AES-CBC", length: 256 },
+    false,
+    ["decrypt"]
+  );
+
+  var decrypted = await crypto.subtle.decrypt(
+    { name: "AES-CBC", iv: iv },
+    key,
+    ciphertext
+  );
+
+  return new TextDecoder().decode(decrypted); // base64-encoded ZIP
+}
+
+/* ------------------------------------------------------------------ */
+/*  Minimal ZIP parser                                                */
+/* ------------------------------------------------------------------ */
+
+// Find End of Central Directory record (scan backwards)
+function findEOCD(view) {
+  var len = view.byteLength;
+  var limit = Math.min(len, 65557); // 22 + 65535 max comment
+  for (var i = len - 22; i >= len - limit && i >= 0; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) return i;
+  }
+  return -1;
+}
+
+// Parse central directory file headers
+function parseCentralDir(buf, view, cdOffset, count) {
+  var entries = [];
+  var pos = cdOffset;
+  var dec = new TextDecoder();
+
+  for (var i = 0; i < count; i++) {
+    if (view.getUint32(pos, true) !== 0x02014b50)
+      throw new Error("Bad central directory entry at offset " + pos);
+
+    var method     = view.getUint16(pos + 10, true);
+    var compSize   = view.getUint32(pos + 20, true);
+    var uncompSize = view.getUint32(pos + 24, true);
+    var nameLen    = view.getUint16(pos + 28, true);
+    var extraLen   = view.getUint16(pos + 30, true);
+    var commentLen = view.getUint16(pos + 32, true);
+    var localOff   = view.getUint32(pos + 42, true);
+    var name       = dec.decode(new Uint8Array(buf, pos + 46, nameLen));
+
+    if (!name.endsWith("/")) { // skip directory entries
+      entries.push({
+        name: name,
+        method: method,
+        compSize: compSize,
+        uncompSize: uncompSize,
+        localOffset: localOff
+      });
+    }
+
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+
+  return entries;
+}
+
+// Extract a single file from its local header
+async function extractEntry(buf, entry) {
+  var view   = new DataView(buf);
+  var pos    = entry.localOffset;
+
+  if (view.getUint32(pos, true) !== 0x04034b50)
+    throw new Error("Bad local header for " + entry.name);
+
+  var nameLen  = view.getUint16(pos + 26, true);
+  var extraLen = view.getUint16(pos + 28, true);
+  var dataOff  = pos + 30 + nameLen + extraLen;
+
+  // Use central-directory sizes (local header may have zeros when bit 3 is set)
+  var compressed = new Uint8Array(buf, dataOff, entry.compSize);
+
+  if (entry.method === 0) return compressed; // stored
+
+  if (entry.method === 8) { // deflate
+    var ds = new DecompressionStream("deflate-raw");
+    var w  = ds.writable.getWriter();
+    w.write(compressed);
+    w.close();
+    return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+  }
+
+  throw new Error("Unsupported compression method " + entry.method + " in " + entry.name);
+}
+
+// Full ZIP parse -> array of { name, size, data }
+async function parseZip(buf) {
+  var view = new DataView(buf);
+
+  var eocd = findEOCD(view);
+  if (eocd < 0) throw new Error("Not a valid ZIP (EOCD signature not found)");
+
+  var totalEntries = view.getUint16(eocd + 10, true);
+  var cdOffset     = view.getUint32(eocd + 16, true);
+
+  if (totalEntries === 0xFFFF || cdOffset === 0xFFFFFFFF)
+    throw new Error("Zip64 archives are not supported");
+
+  var entries = parseCentralDir(buf, view, cdOffset, totalEntries);
+
+  var files = [];
+  for (var i = 0; i < entries.length; i++) {
+    log("  extracting: " + entries[i].name);
+    var data = await extractEntry(buf, entries[i]);
+    files.push({ name: entries[i].name, size: data.length, data: data });
+  }
+
+  return files;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Text vs binary heuristic                                          */
+/* ------------------------------------------------------------------ */
+
+var TEXT_EXT = /\.(txt|md|js|mjs|cjs|ts|mts|cts|jsx|tsx|json|jsonl|ndjson|html|htm|css|scss|less|xml|svg|yml|yaml|sh|bash|zsh|fish|py|rb|java|kt|c|h|cpp|hpp|cc|cs|go|rs|toml|ini|cfg|conf|env|gitignore|gitattributes|dockerignore|editorconfig|eslintrc|prettierrc|csv|tsv|log|sql|graphql|gql|vue|svelte|astro|lock|map|hcl|tf|proto|makefile|cmake|bat|ps1|psm1|psd1|r|rmd|jl|ex|exs|erl|hs|ml|mli|clj|cljs|edn|lisp|scm|el|vim|lua|pl|pm|php|asp|aspx|jsp|erb|haml|slim|pug|jade|sass|styl|diff|patch|rst|adoc|tex|bib|org)$/i;
+
+function isText(name, data) {
+  if (TEXT_EXT.test(name)) return true;
+  if (/^(makefile|dockerfile|vagrantfile|gemfile|rakefile|cmakelists\.txt)$/i.test(name.split("/").pop())) return true;
+  // heuristic: scan first 8 KB for null bytes
+  var end = Math.min(data.length, 8192);
+  for (var i = 0; i < end; i++) {
+    if (data[i] === 0) return false;
+  }
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
+/*  UI state + rendering                                              */
+/* ------------------------------------------------------------------ */
+
+var extractedFiles = [];
+var decryptedZipBytes = null;
+var currentFile = null;
+
+function renderFileList(files) {
+  var container = document.getElementById("file-list");
+  container.innerHTML = "";
+
+  files.forEach(function (file, idx) {
+    var row  = document.createElement("div");
+    row.className = "file-entry";
+    row.setAttribute("data-idx", idx);
+
+    var nameSpan = document.createElement("span");
+    nameSpan.className = "fname";
+    nameSpan.textContent = file.name;
+
+    var sizeSpan = document.createElement("span");
+    sizeSpan.className = "fsize";
+    sizeSpan.textContent = fmtSize(file.size);
+
+    row.appendChild(nameSpan);
+    row.appendChild(sizeSpan);
+
+    var text = isText(file.name, file.data);
+
+    if (text) {
+      var viewBtn = document.createElement("button");
+      viewBtn.className = "fbtn";
+      viewBtn.textContent = "View";
+      viewBtn.onclick = function (e) { e.stopPropagation(); showFile(idx); };
+      row.appendChild(viewBtn);
+    }
+
+    var dlBtn = document.createElement("button");
+    dlBtn.className = "fbtn";
+    dlBtn.textContent = "Save";
+    dlBtn.onclick = function (e) { e.stopPropagation(); downloadFile(file); };
+    row.appendChild(dlBtn);
+
+    row.onclick = function () {
+      if (text) showFile(idx);
+      else downloadFile(file);
+    };
+
+    container.appendChild(row);
+  });
+
+  document.getElementById("files-heading").textContent = "Files (" + files.length + ")";
+  document.getElementById("files-section").classList.remove("hidden");
+}
+
+function showFile(idx) {
+  var file = extractedFiles[idx];
+  currentFile = file;
+
+  // highlight active row
+  var rows = document.querySelectorAll(".file-entry");
+  rows.forEach(function (r) { r.classList.remove("active"); });
+  var row = document.querySelector('.file-entry[data-idx="' + idx + '"]');
+  if (row) row.classList.add("active");
+
+  var content = new TextDecoder("utf-8", { fatal: false }).decode(file.data);
+  document.getElementById("viewer-name").textContent = file.name + "  (" + fmtSize(file.size) + ")";
+  document.getElementById("viewer-content").textContent = content;
+  document.getElementById("viewer").classList.remove("hidden");
+  document.getElementById("viewer").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function downloadFile(file) {
+  var blob = new Blob([file.data]);
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement("a");
+  a.href     = url;
+  a.download = file.name.includes("/") ? file.name.split("/").pop() : file.name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+function downloadCurrent() {
+  if (currentFile) downloadFile(currentFile);
+}
+
+function downloadZip() {
+  if (!decryptedZipBytes) return;
+  var blob = new Blob([decryptedZipBytes], { type: "application/zip" });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement("a");
+  a.href     = url;
+  a.download = "reassembled.zip";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main decrypt flow                                                 */
+/* ------------------------------------------------------------------ */
+
+async function doDecrypt() {
+  var btn = document.getElementById("decrypt-btn");
+  btn.disabled = true;
+  clearLog();
+  document.getElementById("files-section").classList.add("hidden");
+  document.getElementById("viewer").classList.add("hidden");
+  document.getElementById("zip-btn").classList.add("hidden");
+  extractedFiles = [];
+  decryptedZipBytes = null;
+  currentFile = null;
+
+  try {
+    var rawPayload  = document.getElementById("payload").value;
+    var passphrase  = document.getElementById("passphrase").value;
+    var expectedHash = document.getElementById("checksum").value.trim().toLowerCase();
+
+    if (!rawPayload.trim()) { log("No encrypted content provided.", "err"); return; }
+    if (!passphrase)        { log("Passphrase is required.", "err"); return; }
+
+    // Strip all whitespace (handles newlines from Notepad copy-paste)
+    var payload = rawPayload.replace(/\s+/g, "");
+    log("Payload: " + payload.length + " chars");
+
+    // -- Step 1: Decrypt --
+    log("Deriving key (PBKDF2, 100k iterations)...");
+    var base64Zip;
+    try {
+      base64Zip = await decryptPayload(payload, passphrase);
+    } catch (e) {
+      log("Decryption failed -- wrong passphrase?", "err");
+      log("  " + e.message, "err");
+      return;
+    }
+    log("Decrypted.", "ok");
+
+    // -- Step 2: Decode base64 -> ZIP binary --
+    log("Decoding ZIP from base64...");
+    var zipBytes;
+    try {
+      zipBytes = b64ToBytes(base64Zip);
+    } catch (e) {
+      log("Base64 decode failed: " + e.message, "err");
+      return;
+    }
+    decryptedZipBytes = zipBytes;
+    log("ZIP size: " + fmtSize(zipBytes.length));
+
+    // -- Step 3: Checksum --
+    var actualHash = await sha256Hex(zipBytes);
+    log("SHA-256: " + actualHash);
+
+    if (expectedHash) {
+      if (actualHash === expectedHash) {
+        log("Checksum verified OK.", "ok");
+      } else {
+        log("Checksum MISMATCH!", "err");
+        log("  expected: " + expectedHash, "err");
+        log("  actual:   " + actualHash, "err");
+        return;
+      }
+    } else {
+      log("(no expected checksum -- verification skipped)");
+    }
+
+    // -- Step 4: Parse ZIP --
+    log("Extracting ZIP...");
+    var files;
+    try {
+      files = await parseZip(zipBytes.buffer);
+    } catch (e) {
+      log("ZIP extraction failed: " + e.message, "err");
+      return;
+    }
+
+    log("Extracted " + files.length + " file(s).", "ok");
+    extractedFiles = files;
+    renderFileList(files);
+    document.getElementById("zip-btn").classList.remove("hidden");
+
+  } catch (e) {
+    log("Unexpected error: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Allow Enter in passphrase field to trigger decrypt
+document.getElementById("passphrase").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") doDecrypt();
+});
+</script>
+</body>
+</html>
