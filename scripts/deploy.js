@@ -86,12 +86,14 @@ function writeChecksumFile(buffer, chunkNames, outputDir) {
   let content = "# Checksums\n\n";
 
   if (chunkNames && chunkNames.length > 0) {
-    content += `${chunkNames[0]}: \`${hash}\`\n`;
+    content += "Only the first checksum is the real SHA-256 of the original archive.\n";
+    content += "The remaining hashes are random decoys.\n\n";
+    content += `${chunkNames[0]}:\n\`\`\`\n${hash}\n\`\`\`\n`;
     for (let i = 1; i < chunkNames.length; i++) {
       content += `${chunkNames[i]}: \`${randomBytes(32).toString("hex")}\`\n`;
     }
   } else {
-    content += `SHA-256: \`${hash}\`\n`;
+    content += `SHA-256:\n\`\`\`\n${hash}\n\`\`\`\n`;
   }
 
   const fp = join(outputDir, "README.md");
@@ -461,7 +463,7 @@ export async function deploy(args) {
     const pushed = pushToDist(cloneUrl, distRepo, chunkFiles, commitMsg);
     if (pushed) {
       done(`Deployed ${chunkCount} encrypted chunk(s) to ${distRepo}.`);
-      hint("Browser-based decryption: https://github.com/rafa-lopes-pt/leakguard/blob/main/reassemble.html");
+      hint("Browser-based decryption: https://github.com/rafa-lopes-pt/leakguard/blob/main/leakguard-receiver.html");
     }
   } else {
     // -- .7z mode --

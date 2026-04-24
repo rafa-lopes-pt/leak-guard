@@ -7,6 +7,9 @@
 [![license](https://img.shields.io/npm/l/leakguard?color=blue)](https://github.com/rafalopes/leakguard/blob/main/LICENSE)
 [![node](https://img.shields.io/node/v/leakguard)](https://nodejs.org)
 
+```bash
+npm install -g leakguard
+```
 
 **LeakGuard** hardens GitHub organizations on the **free plan** by scanning for leaks at three boundaries where secrets escape:
 
@@ -499,7 +502,7 @@ npx leakguard reassemble output.zip ./chunks --checksum <sha256>
 ```
 
 *Browser (no installs required):*
-Open [`reassemble.html`](reassemble.html) in any modern browser (Chrome 80+, Edge 80+, Firefox 105+, Safari 16.4+). Paste the chunk contents, enter the passphrase, and view or download the decrypted files directly. Everything runs locally -- no server, no file system access, no network requests. This is designed for locked-down corporate machines where CLI tools are unavailable.
+Open [`leakguard-receiver.html`](leakguard-receiver.html) in any modern browser (Chrome 80+, Edge 80+, Firefox 105+, Safari 16.4+). Paste the chunk contents, enter the passphrase, and view or download the decrypted files directly. Everything runs locally -- no server, no file system access, no network requests. This is designed for locked-down corporate machines where CLI tools are unavailable.
 
 Both methods use the same cryptographic parameters: PBKDF2 (100,000 iterations, SHA-256) for key derivation and AES-256-CBC for decryption. The deploy output includes a SHA-256 checksum for verification.
 
