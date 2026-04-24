@@ -11,12 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - npm version, downloads, license, and node version badges to README
 - npm install command at top of README
+- Receiver: side-by-side layout (file list on left, preview on right)
+- Receiver: search bar for filtering files by name
+- Receiver: copy-to-clipboard button in the file viewer
 
 ### Changed
 
 - Dist README checksums now use fenced code blocks (enables GitHub copy button)
 - Dist README explains that only the first checksum is real in chunked mode
 - Renamed reassemble.html to leakguard-receiver.html
+- Receiver: wider max-width (1200px) to accommodate side-by-side layout
+- Receiver: responsive stacked layout on narrow screens (< 768px)
 
 ### Removed
 
