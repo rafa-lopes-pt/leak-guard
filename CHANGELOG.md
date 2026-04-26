@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-04-26
+
 ### Added
 
 - npm version, downloads, license, and node version badges to README
@@ -14,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Receiver: side-by-side layout (file list on left, preview on right)
 - Receiver: search bar for filtering files by name
 - Receiver: copy-to-clipboard button in the file viewer
+- `leakguard lint` command for on-demand security scanning (all tracked files, specific paths, or `--staged`)
 - `leakguard deploy --expires` for time-limited deployments (auto-expire deployed content)
 - Deploy expiry config key (`expires=30m`) with duration, ISO date, and "never" support
 - GitHub Actions expire workflow auto-generated in -dist repos (hourly check, content wipe or repo deletion)
