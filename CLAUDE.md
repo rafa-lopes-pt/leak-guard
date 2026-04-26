@@ -35,6 +35,9 @@ eslint.config.js                # ESLint flat config
 - `leakguard blacklist --override <keywords>` -- Replace entire keyword list
 - `leakguard blacklist -l` / `--list` -- Show current keywords
 - `leakguard blacklist -r` / `--remove <keywords>` -- Remove specific keywords
+- `leakguard lint` -- Run all security scans on tracked files
+- `leakguard lint <paths...>` -- Scan specific files or directories
+- `leakguard lint --staged` -- Scan staged changes only (mirrors pre-commit hook)
 - `leakguard scan-history [repo...]` -- One-time history audit
 - `leakguard zip <files...>` -- Create encrypted .7z archive
 - `leakguard deploy [path]` -- Scan, archive, push to -dist repo

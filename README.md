@@ -283,6 +283,9 @@ If installed globally, replace `npx leakguard` with just `leakguard` in all exam
 | Command | Description |
 |---------|-------------|
 | `leakguard` / `leakguard init` | Interactive TUI setup (default) |
+| `leakguard lint` | Run all security scans on tracked files |
+| `leakguard lint <paths...>` | Scan specific files or directories |
+| `leakguard lint --staged` | Scan staged changes only (mirrors pre-commit hook) |
 | `leakguard blacklist kw1 kw2` | Add/merge keywords into encrypted blocklist |
 | `leakguard blacklist kw1 --override` | Replace entire keyword list |
 | `leakguard blacklist -l` / `--list` | Show current keywords |

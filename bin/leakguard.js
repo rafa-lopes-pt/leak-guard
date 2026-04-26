@@ -26,7 +26,7 @@ _leakguard_completions() {
   local cur prev commands global_flags
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
-  commands="init blacklist scan-history zip deploy setup-dist reassemble uninstall completion"
+  commands="init lint blacklist scan-history zip deploy setup-dist reassemble uninstall completion"
   global_flags="--help -h --version -v"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
@@ -50,6 +50,12 @@ _leakguard_completions() {
     reassemble)
       if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "--checksum -c" -- "$cur") )
+        return
+      fi
+      ;;
+    lint)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--staged --help -h" -- "$cur") )
         return
       fi
       ;;
@@ -85,6 +91,9 @@ ${h("Usage:")}
 
 ${h("Commands:")}
   ${cmd("init")}                    ${dim("Interactive TUI setup (default)")}
+  ${cmd("lint")}                    ${dim("Run all security scans on tracked files")}
+  ${cmd("lint <paths...>")}         ${dim("Scan specific files or directories")}
+  ${cmd("lint --staged")}           ${dim("Scan staged changes only (mirrors pre-commit hook)")}
   ${cmd("blacklist <keywords>")}    ${dim("Add keywords to the encrypted blocklist")}
   ${cmd("scan-history [dir]")}      ${dim("One-time full-history audit")}
   ${cmd("zip <files...>")}          ${dim("Create encrypted .7z archive")}
@@ -148,6 +157,32 @@ ${h("Examples:")}
 `);
 }
 
+function printLintHelp() {
+  const h = (s) => c.bold(c.cyan(s));
+  const cmd = (s) => c.bold(c.white(s));
+  const dim = (s) => c.dim(s);
+
+  console.log(`
+${h("Usage:")} ${cmd("leakguard lint")} ${dim("[options] [paths...]")}
+
+${dim("Run all security scans (file types, keywords, gitleaks) on-demand.")}
+
+${h("Modes:")}
+  ${cmd("leakguard lint")}              ${dim("Scan all tracked files")}
+  ${cmd("leakguard lint <paths...>")}   ${dim("Scan specific files or directories")}
+  ${cmd("leakguard lint --staged")}     ${dim("Scan staged changes only (same as pre-commit hook)")}
+
+${h("Options:")}
+  ${cmd("--staged")}         ${dim("Only scan files staged for commit")}
+  ${cmd("--help, -h")}       ${dim("Show this help message")}
+
+${h("Scans:")}
+  ${dim("1. File types  -- extension + MIME type check (.security-filetypes)")}
+  ${dim("2. Keywords    -- encrypted blocklist (security-keywords.enc)")}
+  ${dim("3. Secrets     -- gitleaks pattern matching (.gitleaks.toml)")}
+`);
+}
+
 const args = process.argv.slice(2);
 const command = args[0] || "--help";
 
@@ -165,6 +200,17 @@ switch (command) {
   case "init": {
     const { main } = await import("../scripts/setup.js");
     await main();
+    break;
+  }
+
+  case "lint": {
+    const subArgs = args.slice(1);
+    if (subArgs.includes("--help") || subArgs.includes("-h")) {
+      printLintHelp();
+      break;
+    }
+    const { lint } = await import("../scripts/lint.js");
+    await lint(subArgs);
     break;
   }
 
