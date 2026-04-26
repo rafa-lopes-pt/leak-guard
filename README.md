@@ -247,6 +247,7 @@ Unscannable binary files (images, videos, PDFs, etc.) must be shipped inside an 
 | `.github/workflows/secret-scan.yml` | CI workflow | Yes |
 | `.git/hooks/pre-commit` | Local pre-commit hook | No (per-machine) |
 | `.leakguardrc` | Distribution and deploy config | Yes |
+| `.expiry` | Deploy expiry timestamp (in `-dist` repo) | Yes (in -dist) |
 | `.git/hooks/pre-commit-dist` | Pre-commit hook for `-dist` repos (allowlist only) | No (per-machine) |
 | `.git/leakguard-audit.log` | Timestamped log of scan pass/block decisions | No (inside `.git/`) |
 
@@ -298,6 +299,7 @@ If installed globally, replace `npx leakguard` with just `leakguard` in all exam
 | `leakguard deploy --config` | Interactive deploy configuration |
 | `leakguard deploy --config k=v` | Set deploy config values directly |
 | `leakguard deploy --dry-run` | Run scans and create archive, but don't push |
+| `leakguard deploy --expires <val>` | Set deploy expiry (30m, 8h, 1d, 2w, ISO date, 0=never) |
 | `leakguard deploy -y` / `--yes` | Skip confirmation prompt |
 | `leakguard setup-dist` | Set up the public `-dist` distribution repo |
 | `leakguard reassemble <out> <dir>` | Reassemble encrypted chunks into archive |
@@ -318,6 +320,7 @@ If installed globally, replace `npx leakguard` with just `leakguard` in all exam
 | `commitMessage` | string | Commit message template (`{archiveName}`, `{chunkCount}`) |
 | `keepArchive` | `false` / path | Save archive copy before cleanup |
 | `createRelease` | `true` / `false` | Create GitHub Release (7z mode only) |
+| `expires` | `30m`, `8h`, `1d`, `2w`, ISO date, `0` | Deploy expiry (default: 30m) |
 
 **Examples with npx:**
 
@@ -492,6 +495,12 @@ npx leakguard setup-dist
 | 7z | `--7z` | Single encrypted `.7z` archive. Optionally creates a GitHub Release (`createRelease=true`). |
 
 Configure the default mode and other settings with `leakguard deploy --config`.
+
+**Deploy expiration:**
+
+Deploys expire by default after 30 minutes. Each deploy writes an `.expiry` timestamp file and a GitHub Actions workflow (`expire.yml`) to the `-dist` repo. The workflow runs hourly and checks the timestamp -- when the deploy expires, it wipes the repo content (force-pushes an empty commit). If the `-dist` repo has a `LEAKGUARD_EXPIRE_TOKEN` secret with a PAT that has `delete_repo` scope, the workflow deletes the repo entirely instead.
+
+Override the default expiry with `--expires <val>` or the `expires` config key. Values can be durations (`30m`, `8h`, `1d`, `2w`), an ISO 8601 date, or `0` to disable expiry.
 
 The `-dist` repo has its own pre-commit hook (`pre-commit-dist`) that only allows archives and leakguard config files -- preventing accidental commits of unscanned content.
 

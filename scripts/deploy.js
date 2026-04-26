@@ -4,13 +4,13 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, mkdirSync, rmSync, copyFileSync, writeFileSync } from "node:fs";
-import { join, basename, resolve } from "node:path";
+import { join, basename, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createCipheriv, createHash, randomBytes, pbkdf2Sync } from "node:crypto";
 import { confirm, password } from "@inquirer/prompts";
 
 import { REPO_ROOT, ENC_FILE, KEY_FILE, commandExists, run, isGitRepo, readRc } from "./lib/rc.js";
-import { resolveDeployConfig, promptDeployConfig, applyKeyValueConfig, parseChunkSize } from "./lib/deploy-config.js";
+import { resolveDeployConfig, promptDeployConfig, applyKeyValueConfig, parseChunkSize, parseExpiry } from "./lib/deploy-config.js";
 import { decryptKeywords } from "./lib/crypto.js";
 import { header, ok, info, warn, error, done, skip, label, hint, filePath, gap } from "./lib/ui.js";
 
@@ -137,7 +137,9 @@ function pushToDist(cloneUrl, distRepo, files, commitMsg) {
 
     // Copy new files
     for (const { sourcePath, destName } of files) {
-      copyFileSync(sourcePath, join(cloneTmp, destName));
+      const dest = join(cloneTmp, destName);
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(sourcePath, dest);
     }
 
     // Stage all changes (additions + deletions from the wipe)
@@ -249,6 +251,81 @@ function scanKeywords(sourceDir) {
 }
 
 // ---------------------------------------------------------------------------
+// Deploy expiration
+// ---------------------------------------------------------------------------
+
+function generateExpireWorkflow() {
+  return `name: Check deploy expiry
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-expiry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check expiry
+        env:
+          GH_TOKEN: \${{ secrets.LEAKGUARD_EXPIRE_TOKEN || '' }}
+        run: |
+          if [ ! -f .expiry ]; then
+            echo "No .expiry file found, skipping."
+            exit 0
+          fi
+
+          EXPIRY=$(cat .expiry | tr -d '[:space:]')
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          if [[ "$NOW" < "$EXPIRY" ]]; then
+            echo "Not expired yet. Expiry: $EXPIRY, Now: $NOW"
+            exit 0
+          fi
+
+          echo "Content has expired ($EXPIRY). Cleaning up..."
+
+          REPO="\${{ github.repository }}"
+          if [ -n "$GH_TOKEN" ]; then
+            echo "LEAKGUARD_EXPIRE_TOKEN found -- deleting repository."
+            gh api -X DELETE "repos/$REPO" --silent || echo "Repo deletion failed (check token permissions)."
+          else
+            echo "No LEAKGUARD_EXPIRE_TOKEN -- wiping content."
+            git checkout --orphan expired
+            git rm -rf . 2>/dev/null || true
+            echo "# Content Expired" > README.md
+            echo "" >> README.md
+            echo "This deployment expired on $EXPIRY and has been automatically removed." >> README.md
+            git add README.md
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "Content expired"
+            git push --force origin expired:main
+          fi
+`;
+}
+
+function generateExpiryFiles(expiryIso, outputDir) {
+  const files = [];
+
+  const expiryPath = join(outputDir, ".expiry");
+  writeFileSync(expiryPath, expiryIso);
+  files.push({ sourcePath: expiryPath, destName: ".expiry" });
+
+  const workflowDir = join(outputDir, ".github", "workflows");
+  mkdirSync(workflowDir, { recursive: true });
+  const workflowPath = join(workflowDir, "expire.yml");
+  writeFileSync(workflowPath, generateExpireWorkflow());
+  files.push({ sourcePath: workflowPath, destName: ".github/workflows/expire.yml" });
+
+  return files;
+}
+
+// ---------------------------------------------------------------------------
 // Main deploy flow
 // ---------------------------------------------------------------------------
 
@@ -267,17 +344,30 @@ export async function deploy(args) {
     return;
   }
 
-  const skipConfirm = flags.has("--yes") || flags.has("-y") || (args || []).includes("-y");
+  // Extract --expires <value> before flag/positional split
+  let expiresArg = null;
+  const rawArgs = args || [];
+  const expiresIdx = rawArgs.indexOf("--expires");
+  if (expiresIdx !== -1 && expiresIdx + 1 < rawArgs.length) {
+    expiresArg = rawArgs[expiresIdx + 1];
+  }
+
+  const skipConfirm = flags.has("--yes") || flags.has("-y") || rawArgs.includes("-y");
   const dryRun = flags.has("--dry-run");
 
   // Load saved deploy config, backfill missing keys with defaults
   const deployConfig = resolveDeployConfig();
 
+  // Resolve expiry: CLI --expires overrides config
+  const expiryRaw = expiresArg ?? deployConfig.expires;
+  const expiryResult = parseExpiry(expiryRaw);
+  const hasExpiry = expiryResult != null && expiryResult.ms > 0;
+
   // CLI flags override config: --chunked / --7z always win
   const chunkedMode = flags.has("--chunked") || (!flags.has("--7z") && deployConfig.defaultMode === "chunked");
 
-  // Filter out key=value pairs from positional args (already handled by --config)
-  const pathArgs = positional.filter((a) => !a.includes("="));
+  // Filter out key=value pairs and --expires value from positional args
+  const pathArgs = positional.filter((a) => !a.includes("=") && a !== expiresArg);
 
   // 1. Resolve source path
   const rc = readRc();
@@ -352,6 +442,10 @@ export async function deploy(args) {
     } else {
       label("Release", "latest (GitHub Release)");
     }
+  }
+  label("Expires", hasExpiry ? expiryResult.iso : "never");
+  if (hasExpiry) {
+    hint("Add LEAKGUARD_EXPIRE_TOKEN secret to the -dist repo for full repo deletion on expiry.");
   }
   gap();
 
@@ -440,6 +534,7 @@ export async function deploy(args) {
     mkdirSync(chunkDir);
     const chunkFiles = splitAndWrite(encryptedText, chunkSize, chunkDir, names);
     chunkFiles.push(writeChecksumFile(zipBuffer, names, chunkDir));
+    if (hasExpiry) chunkFiles.push(...generateExpiryFiles(expiryResult.iso, chunkDir));
 
     if (deployConfig.keepArchive) {
       const keepDir = resolve(REPO_ROOT, deployConfig.keepArchive);
@@ -501,6 +596,7 @@ export async function deploy(args) {
       { sourcePath: archivePath, destName: archiveName },
       writeChecksumFile(archiveBuffer, null, archiveTmp),
     ];
+    if (hasExpiry) files.push(...generateExpiryFiles(expiryResult.iso, archiveTmp));
     const commitMsg = resolveCommitMessage(deployConfig.commitMessage, {
       archiveName,
       chunkCount: "1",

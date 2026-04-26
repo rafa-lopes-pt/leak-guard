@@ -32,6 +32,45 @@ export function parseChunkSize(value, totalSize) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Expiry parsing and validation
+// ---------------------------------------------------------------------------
+
+const EXPIRY_UNITS = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 };
+
+/** Resolve an expiry value to { ms, iso } or null for invalid input. ms:0 = never. */
+export function parseExpiry(value) {
+  if (value == null) return null;
+  const str = String(value).trim().toLowerCase();
+  if (str === "0" || str === "never") return { ms: 0, iso: null };
+
+  // Duration: 30m, 8h, 1d, 7d, 2w
+  const durMatch = str.match(/^(\d+)(m|h|d|w)$/);
+  if (durMatch) {
+    const ms = Number(durMatch[1]) * EXPIRY_UNITS[durMatch[2]];
+    if (ms <= 0) return null;
+    const iso = new Date(Date.now() + ms).toISOString();
+    return { ms, iso };
+  }
+
+  // ISO date
+  const date = new Date(String(value).trim());
+  if (!Number.isNaN(date.getTime())) {
+    if (date.getTime() <= Date.now()) return null; // past date
+    return { ms: date.getTime() - Date.now(), iso: date.toISOString() };
+  }
+
+  return null;
+}
+
+function validateExpiry(value) {
+  const str = String(value).trim().toLowerCase();
+  if (str === "0" || str === "never") return true;
+  const result = parseExpiry(value);
+  if (result === null) return 'Invalid format. Use a duration (30m, 8h, 1d, 2w), ISO date, or "0" for never';
+  return true;
+}
+
 function validateChunkSize(value) {
   const str = String(value).toLowerCase().trim();
   const countMatch = str.match(/^(\d+)n$/);
@@ -53,6 +92,7 @@ export const DEPLOY_DEFAULTS = {
   commitMessage: "Update dist",
   keepArchive: false,
   createRelease: false,
+  expires: "30m",
 };
 
 const DEPLOY_SCHEMA = {
@@ -64,6 +104,7 @@ const DEPLOY_SCHEMA = {
   commitMessage: { type: "string" },
   keepArchive: { type: "string-or-false" },
   createRelease: { type: "boolean" },
+  expires: { type: "expiry" },
 };
 
 export function resolveDeployConfig() {
@@ -141,6 +182,12 @@ export async function promptDeployConfig() {
     default: current.createRelease,
   });
 
+  const expires = await input({
+    message: 'Deploy expiry (e.g. 30m, 8h, 7d, 2w, ISO date, or "0" for never):',
+    default: current.expires,
+    validate: validateExpiry,
+  });
+
   const settings = {
     defaultMode,
     chunkSize,
@@ -150,6 +197,7 @@ export async function promptDeployConfig() {
     commitMessage,
     keepArchive,
     createRelease,
+    expires,
   };
 
   writeDeployConfig(settings);
@@ -223,6 +271,16 @@ export function applyKeyValueConfig(pairs) {
       case "string-or-false":
         updates[key] = rawValue === "false" ? false : rawValue;
         break;
+
+      case "expiry": {
+        const expiryValid = validateExpiry(rawValue);
+        if (expiryValid !== true) {
+          error(`"${key}": ${expiryValid}`);
+          process.exit(1);
+        }
+        updates[key] = rawValue;
+        break;
+      }
     }
   }
 

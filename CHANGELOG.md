@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Receiver: side-by-side layout (file list on left, preview on right)
 - Receiver: search bar for filtering files by name
 - Receiver: copy-to-clipboard button in the file viewer
+- `leakguard deploy --expires` for time-limited deployments (auto-expire deployed content)
+- Deploy expiry config key (`expires=30m`) with duration, ISO date, and "never" support
+- GitHub Actions expire workflow auto-generated in -dist repos (hourly check, content wipe or repo deletion)
 
 ### Changed
 

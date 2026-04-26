@@ -43,7 +43,7 @@ _leakguard_completions() {
       ;;
     deploy)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "--yes -y --dry-run --chunked --7z --config" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--yes -y --dry-run --chunked --7z --config --expires" -- "$cur") )
         return
       fi
       ;;
@@ -102,6 +102,7 @@ ${h("Commands:")}
   ${cmd("deploy --7z")}             ${dim("Deploy as single encrypted .7z archive")}
   ${cmd("deploy --config")}         ${dim("Interactive deploy configuration")}
   ${cmd("deploy --config k=v")}     ${dim("Set deploy config values directly")}
+  ${cmd("deploy --expires <val>")}   ${dim("Set deploy expiry (30m, 8h, 1d, 2w, ISO date, 0=never)")}
   ${cmd("deploy --dry-run")}        ${dim("Run scans and create archive, but don't push")}
   ${cmd("deploy -y, --yes")}        ${dim("Skip confirmation prompt")}
   ${cmd("setup-dist")}              ${dim("Set up the public -dist repo for secure distribution")}
@@ -125,6 +126,7 @@ ${h("Deploy config keys:")}
   ${dim("commitMessage=...         Commit message template ({archiveName}, {chunkCount})")}
   ${dim("keepArchive=false|path    Save archive copy before cleanup")}
   ${dim("createRelease=true|false  Create GitHub Release (7z mode only)")}
+  ${dim('expires=30m               Deploy expiry (30m, 8h, 1d, 2w, ISO date, or "0" for never)')}
 
 ${h("Options:")}
   ${cmd("--help, -h")}          ${dim("Show this help message")}
