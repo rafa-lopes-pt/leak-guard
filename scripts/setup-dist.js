@@ -9,7 +9,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
-import { REPO_ROOT, commandExists, run, isGitRepo, ensureGitignoreEntry, writeRc } from "./lib/rc.js";
+import { REPO_ROOT, commandExists, run, isGitRepo, ensureGitignoreEntry, readRc, writeRc } from "./lib/rc.js";
 import { banner, ok, info, warn, error, hint, label, filePath, gap } from "./lib/ui.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -128,9 +128,10 @@ async function run_setup() {
   }
 
   // 8. Prompt for public directory name
+  const existingRc = readRc() || {};
   const distFolder = await input({
     message: "Local distribution folder name:",
-    default: "public-dist",
+    default: existingRc.distFolder || "public-dist",
   });
 
   // 9. Create the directory with .gitkeep if it doesn't exist
@@ -141,11 +142,18 @@ async function run_setup() {
     ok(`Created ${filePath(distFolder + "/")} with .gitkeep`);
   }
 
-  // 10. Add the directory to .gitignore
-  ensureGitignoreEntry(distFolder + "/");
+  // 10. Optional gitignore: tracked vs staging-only
+  hint("Tracked = source repo keeps version history of dist contents.");
+  hint("Gitignored = folder is staging-only; only the -dist repo holds it.");
+  const previouslyTracked = existingRc.distFolderTracked;
+  const trackInSource = await confirm({
+    message: `Track "${distFolder}/" in the source repo?`,
+    default: previouslyTracked != null ? previouslyTracked : true,
+  });
+  if (!trackInSource) ensureGitignoreEntry(distFolder + "/");
 
   // 11. Write .leakguardrc
-  writeRc({ distFolder, distRepo });
+  writeRc({ distFolder, distRepo, distFolderTracked: trackInSource });
 
   // 12. Summary
   banner("Distribution Setup Complete");

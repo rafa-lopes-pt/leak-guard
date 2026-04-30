@@ -9,6 +9,7 @@ export const REPO_ROOT = process.cwd();
 export const RC_FILE = join(REPO_ROOT, ".leakguardrc");
 export const KEY_FILE = join(REPO_ROOT, ".security-key");
 export const ENC_FILE = join(REPO_ROOT, "security-keywords.enc");
+export const DEPLOY_PWD_FILE = join(REPO_ROOT, ".deploy-password.enc");
 export const IS_WINDOWS = process.platform === "win32";
 
 export function commandExists(cmd) {

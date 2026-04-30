@@ -43,7 +43,7 @@ _leakguard_completions() {
       ;;
     deploy)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "--yes -y --dry-run --chunked --7z --config --expires" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--yes -y --dry-run --chunked --7z --config --expires --reset-password --no-save-password --forget-password" -- "$cur") )
         return
       fi
       ;;
@@ -105,6 +105,9 @@ ${h("Commands:")}
   ${cmd("deploy --expires <val>")}   ${dim("Set deploy expiry (30m, 8h, 1d, 2w, ISO date, 0=never)")}
   ${cmd("deploy --dry-run")}        ${dim("Run scans and create archive, but don't push")}
   ${cmd("deploy -y, --yes")}        ${dim("Skip confirmation prompt")}
+  ${cmd("deploy --reset-password")} ${dim("Force prompt and re-save the deploy password")}
+  ${cmd("deploy --no-save-password")} ${dim("Prompt for password without offering to save it")}
+  ${cmd("deploy --forget-password")} ${dim("Delete the saved deploy password and exit")}
   ${cmd("setup-dist")}              ${dim("Set up the public -dist repo for secure distribution")}
   ${cmd("reassemble <out> <dir>")}  ${dim("Reassemble encrypted chunks into archive")}
   ${cmd("uninstall")}               ${dim("Remove LeakGuard artifacts from repo")}

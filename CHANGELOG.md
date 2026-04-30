@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-30
+
+### Added
+
+- Persisted deploy password: `leakguard deploy` remembers the archive password between runs (encrypted in gitignored `.deploy-password.enc`, keyed off `.security-key`)
+- `leakguard deploy --reset-password` -- force prompt and re-save
+- `leakguard deploy --no-save-password` -- prompt without offering to save
+- `leakguard deploy --forget-password` -- delete the saved deploy password
+- `setup-dist` prompts whether to track the dist folder in the source repo (default: track) -- enables source-mirror workflows where the dist contents are version-controlled
+- `distFolderTracked` key persisted in `.leakguardrc` so re-running `setup-dist` defaults to the previous choice
+
+### Changed
+
+- `setup-dist` no longer auto-gitignores the local dist folder; the user chooses
+- Deploy `.7z` mode now feeds the password via argv (`-p<pw>`) instead of an interactive 7z prompt, enabling reuse of the saved password (visible in `/proc/<pid>/cmdline` while 7z runs)
+
 ## [1.1.0] - 2026-04-26
 
 ### Added

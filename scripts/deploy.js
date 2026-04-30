@@ -12,6 +12,7 @@ import { confirm, password } from "@inquirer/prompts";
 import { REPO_ROOT, ENC_FILE, KEY_FILE, commandExists, run, isGitRepo, readRc } from "./lib/rc.js";
 import { resolveDeployConfig, promptDeployConfig, applyKeyValueConfig, parseChunkSize, parseExpiry } from "./lib/deploy-config.js";
 import { decryptKeywords } from "./lib/crypto.js";
+import { loadPassword, savePassword, clearPassword, hasSavedPassword } from "./lib/deploy-password.js";
 import { header, ok, info, warn, error, done, skip, label, hint, filePath, gap } from "./lib/ui.js";
 
 // ---------------------------------------------------------------------------
@@ -329,6 +330,60 @@ function generateExpiryFiles(expiryIso, outputDir) {
 // Main deploy flow
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Password resolution: stored -> prompt; optional save
+// ---------------------------------------------------------------------------
+
+const MIN_PASSPHRASE_LENGTH = 12;
+
+async function resolveDeployPassword({ resetPassword, noSavePassword }) {
+  if (!resetPassword) {
+    const stored = loadPassword();
+    if (stored) {
+      info("Using saved deploy password.");
+      return stored;
+    }
+    if (hasSavedPassword()) {
+      warn(".deploy-password.enc exists but could not be decrypted (wrong key or corrupt). Falling back to prompt.");
+    }
+  } else if (hasSavedPassword()) {
+    info("--reset-password: clearing saved password.");
+    clearPassword();
+  }
+
+  const passphrase = await password({ message: "Enter passphrase for encryption:" });
+  if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
+    error(`Passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters.`);
+    process.exit(1);
+  }
+  const passConfirm = await password({ message: "Confirm passphrase:" });
+  if (passphrase !== passConfirm) {
+    error("Passphrases do not match.");
+    process.exit(1);
+  }
+
+  if (!noSavePassword) {
+    if (!existsSync(KEY_FILE)) {
+      hint(".security-key missing -- cannot offer to save the deploy password.");
+    } else {
+      const shouldSave = await confirm({
+        message: "Save password to .deploy-password.enc (gitignored)?",
+        default: true,
+      });
+      if (shouldSave) {
+        try {
+          savePassword(passphrase);
+          ok("Saved encrypted deploy password.");
+        } catch (e) {
+          warn(`Could not save password: ${e.message}`);
+        }
+      }
+    }
+  }
+
+  return passphrase;
+}
+
 export async function deploy(args) {
   const flags = new Set((args || []).filter((a) => a.startsWith("--")));
   const positional = (args || []).filter((a) => !a.startsWith("--") && a !== "-y");
@@ -343,6 +398,20 @@ export async function deploy(args) {
     }
     return;
   }
+
+  // --forget-password: remove any stored password and exit
+  if (flags.has("--forget-password")) {
+    if (hasSavedPassword()) {
+      clearPassword();
+      done("Removed .deploy-password.enc");
+    } else {
+      info("No saved deploy password to forget.");
+    }
+    return;
+  }
+
+  const resetPassword = flags.has("--reset-password");
+  const noSavePassword = flags.has("--no-save-password");
 
   // Extract --expires <value> before flag/positional split
   let expiresArg = null;
@@ -490,18 +559,12 @@ export async function deploy(args) {
 
   if (chunkedMode) {
     // -- Chunked mode: plain ZIP -> base64 -> AES encrypt -> split into text chunks --
-    const MIN_PASSPHRASE_LENGTH = 12;
-    const passphrase = await password({ message: "Enter passphrase for encryption:" });
-    if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
+    let passphrase;
+    try {
+      passphrase = await resolveDeployPassword({ resetPassword, noSavePassword });
+    } catch (e) {
       rmSync(archiveTmp, { recursive: true, force: true });
-      error(`Passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters.`);
-      process.exit(1);
-    }
-    const passConfirm = await password({ message: "Confirm passphrase:" });
-    if (passphrase !== passConfirm) {
-      rmSync(archiveTmp, { recursive: true, force: true });
-      error("Passphrases do not match.");
-      process.exit(1);
+      throw e;
     }
 
     info(`Creating plain ZIP: ${archiveName}`);
@@ -563,17 +626,28 @@ export async function deploy(args) {
   } else {
     // -- .7z mode --
     info(`Creating encrypted archive: ${archiveName}`);
-    hint("Enter a password for the archive:");
 
+    let archivePassword;
+    try {
+      archivePassword = await resolveDeployPassword({ resetPassword, noSavePassword });
+    } catch (e) {
+      rmSync(archiveTmp, { recursive: true, force: true });
+      throw e;
+    }
+
+    // Password passed via -p<pw> argv. Visible in /proc/<pid>/cmdline for the
+    // seconds 7z runs -- consistent with the encrypted-on-disk persistence
+    // model the user has opted into.
     const zipResult = spawnSync(
       "7z",
-      ["a", "-p", "-mhe=on", archivePath, join(sourceDir, "*")],
-      { stdio: "inherit" },
+      ["a", `-p${archivePassword}`, "-mhe=on", archivePath, join(sourceDir, "*")],
+      { stdio: ["pipe", "pipe", "pipe"] },
     );
 
     if (zipResult.status !== 0) {
       rmSync(archiveTmp, { recursive: true, force: true });
       error("Archive creation failed.");
+      if (zipResult.stderr) console.error(zipResult.stderr.toString());
       process.exit(1);
     }
 

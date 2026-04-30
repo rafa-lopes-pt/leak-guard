@@ -1,6 +1,6 @@
 {
   "name": "leakguard",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "GitHub security hardening toolkit -- pre-commit hooks and CI for secret scanning, keyword blocking, and file type enforcement",
   "type": "module",
   "bin": {
@@ -21,7 +21,7 @@
   },
   "leakguard": {
     "gitleaksVersion": "8.21.2",
-    "versionDate": "2026-04-23"
+    "versionDate": "2026-04-30"
   },
   "scripts": {
     "prepare": "husky",
