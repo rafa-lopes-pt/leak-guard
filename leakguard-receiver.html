@@ -88,6 +88,7 @@ button:disabled{background:#94a3b8;cursor:not-allowed}
       <span id="viewer-name"></span>
       <div>
         <button class="fbtn" id="copy-btn" onclick="copyContent()">Copy</button>
+        <button class="fbtn" id="save-as-btn" onclick="saveCurrentAs()">Save as...</button>
         <button class="fbtn" onclick="downloadCurrent()">Download file</button>
       </div>
     </div>
@@ -372,6 +373,10 @@ function showFile(idx) {
   document.getElementById("viewer-name").textContent = file.name + "  (" + fmtSize(file.size) + ")";
   document.getElementById("viewer-content").textContent = content;
   document.getElementById("viewer").classList.remove("hidden");
+
+  var saveAsBtn = document.getElementById("save-as-btn");
+  if ("showSaveFilePicker" in window) saveAsBtn.style.display = "";
+  else saveAsBtn.style.display = "none";
 }
 
 function downloadFile(file) {
@@ -388,6 +393,58 @@ function downloadFile(file) {
 
 function downloadCurrent() {
   if (currentFile) downloadFile(currentFile);
+}
+
+function pickerTypeFor(name) {
+  var ext = name.includes(".") ? name.slice(name.lastIndexOf(".")) : "";
+  var lower = ext.toLowerCase();
+  var mimeMap = {
+    ".js": "text/javascript", ".mjs": "text/javascript", ".cjs": "text/javascript",
+    ".ts": "text/plain", ".tsx": "text/plain", ".jsx": "text/javascript",
+    ".html": "text/html", ".htm": "text/html",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".txt": "text/plain", ".md": "text/markdown",
+    ".xml": "application/xml", ".svg": "image/svg+xml"
+  };
+  var mime = mimeMap[lower] || "application/octet-stream";
+  var description = ext ? ext.slice(1).toUpperCase() + " file" : "File";
+  var accept = {};
+  accept[mime] = ext ? [ext] : [];
+  return { description: description, accept: accept };
+}
+
+async function saveCurrentAs() {
+  if (!currentFile) return;
+  if (!("showSaveFilePicker" in window)) {
+    log("Save picker unavailable in this browser. Use 'Download file' instead.", "err");
+    return;
+  }
+  var suggested = currentFile.name.includes("/")
+    ? currentFile.name.split("/").pop()
+    : currentFile.name;
+  var handle;
+  try {
+    handle = await window.showSaveFilePicker({
+      suggestedName: suggested,
+      types: [pickerTypeFor(suggested)]
+    });
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    log("Save cancelled: " + e.message, "err");
+    return;
+  }
+  try {
+    var writable = await handle.createWritable();
+    await writable.write(currentFile.data);
+    await writable.close();
+    var btn = document.getElementById("save-as-btn");
+    var prev = btn.textContent;
+    btn.textContent = "Saved";
+    setTimeout(function () { btn.textContent = prev; }, 1500);
+  } catch (e) {
+    log("Write failed: " + e.message, "err");
+  }
 }
 
 function copyContent() {
