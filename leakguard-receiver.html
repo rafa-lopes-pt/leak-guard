@@ -69,6 +69,7 @@ button:disabled{background:#94a3b8;cursor:not-allowed}
 
   <div class="actions">
     <button id="decrypt-btn" onclick="doDecrypt()">Decrypt</button>
+    <button id="folder-btn" class="hidden" onclick="saveAllToFolder()">Save All to Folder</button>
     <button id="zip-btn" class="btn-secondary hidden" onclick="downloadZip()">Download ZIP</button>
   </div>
 </div>
@@ -411,6 +412,62 @@ function downloadZip() {
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 }
 
+async function writeFileToDir(rootHandle, relativePath, data) {
+  var parts = relativePath.split("/").filter(function (p) { return p && p !== "."; });
+  var fileName = parts.pop();
+  var dir = rootHandle;
+  for (var i = 0; i < parts.length; i++) {
+    dir = await dir.getDirectoryHandle(parts[i], { create: true });
+  }
+  var fileHandle = await dir.getFileHandle(fileName, { create: true });
+  var writable = await fileHandle.createWritable();
+  await writable.write(data);
+  await writable.close();
+}
+
+async function saveAllToFolder() {
+  if (!("showDirectoryPicker" in window)) {
+    log("File System Access API unavailable in this browser.", "err");
+    return;
+  }
+  if (!extractedFiles.length) return;
+
+  var btn = document.getElementById("folder-btn");
+  btn.disabled = true;
+
+  var dirHandle;
+  try {
+    dirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+  } catch (e) {
+    btn.disabled = false;
+    if (e.name === "AbortError") return;
+    log("Could not open folder: " + e.message, "err");
+    return;
+  }
+
+  log("Writing " + extractedFiles.length + " file(s) to chosen folder...");
+  var written = 0;
+  var failed = 0;
+  for (var i = 0; i < extractedFiles.length; i++) {
+    var file = extractedFiles[i];
+    try {
+      await writeFileToDir(dirHandle, file.name, file.data);
+      written++;
+    } catch (e) {
+      failed++;
+      log("  failed: " + file.name + " -- " + e.message, "err");
+    }
+    if (i < extractedFiles.length - 1) {
+      await new Promise(function (r) { setTimeout(r, 30); });
+    }
+  }
+
+  if (failed === 0) log("Wrote " + written + " file(s).", "ok");
+  else log("Wrote " + written + ", failed " + failed + ".", failed ? "err" : "ok");
+
+  btn.disabled = false;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Main decrypt flow                                                 */
 /* ------------------------------------------------------------------ */
@@ -422,6 +479,7 @@ async function doDecrypt() {
   document.getElementById("files-panel").classList.add("hidden");
   document.getElementById("viewer").classList.add("hidden");
   document.getElementById("zip-btn").classList.add("hidden");
+  document.getElementById("folder-btn").classList.add("hidden");
   document.getElementById("search").value = "";
   extractedFiles = [];
   decryptedZipBytes = null;
@@ -495,6 +553,9 @@ async function doDecrypt() {
     document.getElementById("files-panel").classList.remove("hidden");
     renderFileList(getFilteredItems());
     document.getElementById("zip-btn").classList.remove("hidden");
+    if ("showDirectoryPicker" in window) {
+      document.getElementById("folder-btn").classList.remove("hidden");
+    }
 
   } catch (e) {
     log("Unexpected error: " + e.message, "err");
